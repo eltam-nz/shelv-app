@@ -29,9 +29,27 @@ Every one of these runs in CI and must pass before merge.
 | TypeScript types | `pnpm typecheck` |
 | Frontend build | `pnpm build` |
 | Platform boundary | `./scripts/check-platform-boundary.sh` |
+| Generated types | `./scripts/check-generated-types.sh` |
 | Windows cross-check | `cargo clippy -p shelv-core --target x86_64-pc-windows-gnu --all-targets -- -D warnings` |
 
 `pnpm format` rewrites files in place; `cargo fmt --all` does the same for Rust.
+
+## Generated types
+
+`src/types/` is generated from the Rust types that cross the IPC boundary and
+is committed, so the frontend builds without a Rust toolchain. After changing
+any of those types:
+
+```sh
+./scripts/gen-types.sh
+```
+
+CI runs `check-generated-types.sh`, which regenerates and fails if the result
+differs from what is committed. Drifting IPC payload shapes are the most common
+bug in a Tauri app and the hardest to spot, because both sides still compile
+and the mismatch only appears at runtime.
+
+Do not hand-edit anything under `src/types/` — the generator overwrites it.
 
 ## Running the app
 
