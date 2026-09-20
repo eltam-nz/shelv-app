@@ -1,103 +1,95 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { AppShell } from "./components/AppShell";
-import { AvailabilityPill, RunResultPill } from "./components/StatusPill";
-import { appVersion, listRules, listVolumes } from "./lib/ipc";
-import { TAG_TOKENS, tagStyle } from "./lib/palette";
-import type { Availability, RunResult } from "./types";
+import { RuleTable } from "./components/RuleTable";
+import { listRules, listTags } from "./lib/ipc";
+import { tagStyle } from "./lib/palette";
+import type { RuleRow, Tag, TagId } from "./types";
 
-const AVAILABILITIES: Availability[] = [
-  "available",
-  "disconnected",
-  "refused",
-  "identity_mismatch",
-];
-const RESULTS: (RunResult | null)[] = [null, "ok", "partial", "failed", "cancelled"];
-
-/**
- * Theme preview.
- *
- * Stands in until the rule table lands in task #9, and renders every palette
- * token and status state so a regression is visible rather than theoretical.
- */
 export function App() {
-  const [status, setStatus] = useState<string>("connecting…");
+  const [rows, setRows] = useState<RuleRow[]>([]);
+  const [tags, setTags] = useState<Tag[]>([]);
+  const [filter, setFilter] = useState<TagId[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    void (async () => {
-      try {
-        const [version, rules, volumes] = await Promise.all([
-          appVersion(),
-          listRules(),
-          listVolumes(),
-        ]);
-        setStatus(
-          `v${version} · ${String(rules.length)} rules · ${String(volumes.length)} known volumes`,
-        );
-      } catch (error: unknown) {
-        setStatus(`IPC error: ${String(error)}`);
-      }
-    })();
+  const refresh = useCallback(async () => {
+    try {
+      const [nextRows, nextTags] = await Promise.all([listRules(), listTags()]);
+      setRows(nextRows);
+      setTags(nextTags);
+      setError(null);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
+  useEffect(() => {
+    // Wrapped rather than called directly: the lint rule cannot see that
+    // `refresh` awaits before it touches state, and reads the bare call as a
+    // synchronous setState inside an effect.
+    const load = async () => {
+      await refresh();
+    };
+    void load();
+  }, [refresh]);
+
+  const toggleTag = (id: TagId) => {
+    setFilter((current) =>
+      current.includes(id) ? current.filter((t) => t !== id) : [...current, id],
+    );
+  };
+
+  const unavailable = rows.filter(
+    (row) => !row.destinations.some((d) => d.status.availability === "available"),
+  ).length;
+
   return (
-    <AppShell title="Shelv" status={status}>
-      <div className="space-y-6 p-4">
-        <Section title="Tags">
-          <div className="flex flex-wrap gap-2">
-            {TAG_TOKENS.map((token) => (
-              <span
-                key={token}
-                className="rounded px-2 py-0.5 text-xs"
-                style={tagStyle(token)}
-              >
-                {token.replace("pastel-", "")}
-              </span>
-            ))}
+    <AppShell
+      title="Shelv"
+      actions={
+        tags.length > 0 && (
+          <div className="flex items-center gap-1.5">
+            {tags.map((tag) => {
+              const active = filter.includes(tag.id);
+              return (
+                <button
+                  key={tag.id}
+                  type="button"
+                  onClick={() => {
+                    toggleTag(tag.id);
+                  }}
+                  aria-pressed={active}
+                  className="rounded px-2 py-0.5 text-xs"
+                  style={
+                    active
+                      ? tagStyle(tag.colour)
+                      : { color: "var(--fg-muted)", backgroundColor: "transparent" }
+                  }
+                >
+                  {tag.name}
+                </button>
+              );
+            })}
           </div>
-        </Section>
-
-        <Section title="Destination status">
-          <div className="flex flex-wrap gap-3">
-            {AVAILABILITIES.map((a) => (
-              <AvailabilityPill key={a} availability={a} />
-            ))}
-          </div>
-        </Section>
-
-        <Section title="Last result">
-          <div className="flex flex-wrap gap-3">
-            {RESULTS.map((r) => (
-              <RunResultPill key={r ?? "never"} result={r} />
-            ))}
-          </div>
-        </Section>
-
-        <Section title="Surfaces">
-          <div className="flex gap-3">
-            {["bg", "surface", "surface-raised"].map((name) => (
-              <div
-                key={name}
-                className="rounded border border-border px-3 py-6 text-xs text-fg-muted"
-                style={{ backgroundColor: `var(--${name})` }}
-              >
-                {name}
-              </div>
-            ))}
-          </div>
-        </Section>
-      </div>
+        )
+      }
+      status={
+        error !== null ? (
+          <span style={{ color: "var(--status-mismatch)" }}>{error}</span>
+        ) : loading ? (
+          "Loading…"
+        ) : (
+          <>
+            {rows.length} rules
+            {unavailable > 0 && ` · ${String(unavailable)} with no reachable destination`}
+          </>
+        )
+      }
+    >
+      {!loading && error === null && <RuleTable rows={rows} tagFilter={filter} />}
     </AppShell>
-  );
-}
-
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <section className="rounded border border-border bg-surface p-4">
-      <h2 className="mb-3 text-xs font-medium tracking-wide text-fg-muted uppercase">
-        {title}
-      </h2>
-      {children}
-    </section>
   );
 }

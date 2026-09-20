@@ -27,6 +27,7 @@ Every one of these runs in CI and must pass before merge.
 | TypeScript lints | `pnpm lint` |
 | TypeScript formatting | `pnpm format:check` |
 | TypeScript types | `pnpm typecheck` |
+| Frontend tests | `pnpm test` |
 | Frontend build | `pnpm build` |
 | Platform boundary | `./scripts/check-platform-boundary.sh` |
 | Generated types | `./scripts/check-generated-types.sh` |

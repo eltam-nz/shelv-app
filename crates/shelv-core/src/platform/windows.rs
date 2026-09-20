@@ -156,8 +156,9 @@ impl WindowsFs {
                 // Enumerating true volume GUID paths needs
                 // FindFirstVolume/GetVolumePathNamesForVolumeName, which lands
                 // with volume tracking in M1. Until then the mount root stands
-                // in, and `volumes::` refuses to write to a volume whose
-                // identity it cannot verify. A mount root is ASCII ("C:\\") or
+                // in — which is a drive letter, the unstable value this field
+                // exists to replace. Nothing refuses it yet; task #13 must
+                // close that before the copier lands. A mount root is ASCII or
                 // a GUID path, so the lossy conversion cannot alter it.
                 #[allow(clippy::disallowed_methods)]
                 value: root.to_string_lossy().into_owned(),

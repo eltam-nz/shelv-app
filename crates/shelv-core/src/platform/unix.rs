@@ -189,9 +189,11 @@ impl UnixFs {
         VolumeInfo {
             identity: VolumeIdentity {
                 kind: VolumeIdentityKind::LinuxFsUuid,
-                // Without a UUID the mount point is the only handle available.
-                // It is not stable across reconnection, so `volumes::` treats
-                // such a volume as unverifiable and refuses to write to it.
+                // Without a UUID the mount point is the only handle
+                // available, and it is *not* stable across reconnection —
+                // exactly what identity matching exists to avoid. Nothing
+                // refuses such a volume yet; task #13 must close that before
+                // the copier lands in M1.
                 #[allow(
                     clippy::disallowed_methods,
                     reason = "an identity is a display string, never reopened as a path"
