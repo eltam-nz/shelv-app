@@ -9,7 +9,9 @@ import {
 import { useMemo, useState } from "react";
 
 import { tagStyle } from "../lib/palette";
+import { formatLocation } from "../lib/volumes";
 import type { Layout, Packaging, RuleRow, Schedule, TagId } from "../types";
+import { AvailabilityPill, RunResultPill } from "./StatusPill";
 
 declare module "@tanstack/react-table" {
   // Lets a cell reach the callbacks without threading them through every
@@ -19,8 +21,6 @@ declare module "@tanstack/react-table" {
     onEdit: ((row: RuleRow) => void) | undefined;
   }
 }
-import { AvailabilityPill, RunResultPill } from "./StatusPill";
-
 /**
  * The rule table.
  *
@@ -72,15 +72,9 @@ function formatPackaging(packaging: Packaging): string {
   }
 }
 
-/** A rule's source, as `Volume · relative/path`. */
+/** A rule's source, as `Drive · relative/path`. */
 function sourceLocation(row: RuleRow): string {
-  return formatLocation(row.source.volume.label, row.rule.spec.source.relative);
-}
-
-/** A volume-relative path, shown as `Volume · relative/path`. */
-function formatLocation(label: string | null, relative: string): string {
-  const prefix = label ?? "?";
-  return `${prefix} · ${relative}`;
+  return formatLocation(row.source, row.rule.spec.source.relative);
 }
 
 const columns = [
@@ -153,9 +147,9 @@ const columns = [
             <div
               key={d.destination.id}
               className="truncate"
-              title={formatLocation(d.status.volume.label, d.destination.path.relative)}
+              title={formatLocation(d.status, d.destination.path.relative)}
             >
-              {formatLocation(d.status.volume.label, d.destination.path.relative)}
+              {formatLocation(d.status, d.destination.path.relative)}
             </div>
           ))}
         </div>

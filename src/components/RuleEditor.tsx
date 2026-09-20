@@ -9,6 +9,7 @@ import {
   validateRule,
 } from "../lib/ipc";
 import { tagStyle } from "../lib/palette";
+import { volumeName } from "../lib/volumes";
 import {
   describeProblem,
   generalProblems,
@@ -91,7 +92,7 @@ export function RuleEditor({
       ? {
           path: existing.rule.spec.source,
           label: existing.source.volume.label,
-          display: `${existing.source.volume.label ?? "?"} · ${existing.rule.spec.source.relative}`,
+          display: `${volumeName(existing.source)} · ${existing.rule.spec.source.relative}`,
         }
       : null,
   );
@@ -103,7 +104,7 @@ export function RuleEditor({
       ? existing.destinations.map((d) => ({
           path: d.destination.path,
           label: d.status.volume.label,
-          display: `${d.status.volume.label ?? "?"} · ${d.destination.path.relative}`,
+          display: `${volumeName(d.status)} · ${d.destination.path.relative}`,
         }))
       : [],
   );
