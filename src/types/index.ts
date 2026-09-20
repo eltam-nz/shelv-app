@@ -3,10 +3,12 @@
 // These mirror the Rust types in shelv-core that cross the IPC
 // boundary. CI fails if they drift from the Rust.
 
+export type { Availability } from "./Availability";
 export type { CaseSensitivity } from "./CaseSensitivity";
 export type { CoreError } from "./CoreError";
 export type { Destination } from "./Destination";
 export type { DestinationId } from "./DestinationId";
+export type { DestinationStatus } from "./DestinationStatus";
 export type { DriveType } from "./DriveType";
 export type { EventLevel } from "./EventLevel";
 export type { Layout } from "./Layout";
@@ -17,6 +19,7 @@ export type { PlaceholderState } from "./PlaceholderState";
 export type { Retention } from "./Retention";
 export type { Rule } from "./Rule";
 export type { RuleId } from "./RuleId";
+export type { RuleRow } from "./RuleRow";
 export type { RuleSpec } from "./RuleSpec";
 export type { Run } from "./Run";
 export type { RunEvent } from "./RunEvent";
@@ -34,3 +37,4 @@ export type { VolumeIdentity } from "./VolumeIdentity";
 export type { VolumeIdentityKind } from "./VolumeIdentityKind";
 export type { VolumeInfo } from "./VolumeInfo";
 export type { VolumePath } from "./VolumePath";
+export type { VolumeStatus } from "./VolumeStatus";

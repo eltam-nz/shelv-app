@@ -80,7 +80,12 @@ const EXPECTED_PERMISSIONS: &[&str] =
     &["core:default", "dialog:allow-open", "notification:default"];
 
 fn build_app() -> tauri::App<tauri::test::MockRuntime> {
+    let store = shelv_core::store::Store::open_in_memory().expect("an in-memory store");
     mock_builder()
+        .manage(crate::commands::AppState::new(
+            store,
+            shelv_core::platform::host_fs(),
+        ))
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())

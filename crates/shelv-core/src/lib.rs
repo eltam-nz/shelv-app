@@ -15,6 +15,7 @@ pub mod platform;
 pub mod safety;
 pub mod scheduler;
 pub mod store;
+pub mod view;
 pub mod volumes;
 
 pub use error::{CoreError, Result};

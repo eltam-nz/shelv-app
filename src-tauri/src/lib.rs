@@ -6,6 +6,9 @@
 
 mod commands;
 
+use shelv_core::platform;
+use shelv_core::store::Store;
+
 #[cfg(test)]
 mod security_tests;
 
@@ -15,6 +18,12 @@ pub enum StartupError {
     /// The Tauri runtime could not be built or run.
     #[error("could not start the application: {0}")]
     Runtime(#[from] tauri::Error),
+
+    /// The rule database could not be opened or migrated. Starting without it
+    /// would present an empty rule list, which reads as "your backups are
+    /// gone"; refusing to start is the honest failure.
+    #[error("could not open the Shelv database: {0}")]
+    Store(#[from] shelv_core::CoreError),
 }
 
 /// Builds and runs the desktop application, returning once the last window
@@ -27,9 +36,15 @@ pub fn run() -> Result<(), StartupError> {
         )
         .init();
 
+    let fs = platform::host_fs();
+    let db_path = Store::default_path(fs.as_ref())?;
+    tracing::info!(path = %db_path.display(), "opening the rule database");
+    let store = Store::open(&db_path)?;
+
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
+        .manage(commands::AppState::new(store, fs))
         .invoke_handler(commands::handlers())
         .run(tauri::generate_context!())?;
 
