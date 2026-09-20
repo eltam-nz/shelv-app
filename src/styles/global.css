@@ -1,0 +1,20 @@
+/* Placeholder only. The real palette, with its contrast checks, lands in
+   task #8; these few tokens exist so the scaffold is not unstyled white. */
+:root {
+  --bg: #14161a;
+  --fg: #e6e8ec;
+  --muted: #9aa1ad;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+.shell { padding: 2rem; }
+.muted { color: var(--muted); }

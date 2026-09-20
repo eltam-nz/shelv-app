@@ -1,0 +1,33 @@
+[package]
+name = "shelv"
+description = "Shelv desktop shell"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+# Required for the mobile-capable Tauri 2 entrypoint layout; also lets
+# integration tests link against the shell.
+name = "shelv_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+shelv-core = { workspace = true }
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-notification = "2"
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+ts-rs = { workspace = true }
+
+# The updater, autostart and single-instance plugins are desktop-only and are
+# added in M3/M5 when the features that need them land. Keeping them out until
+# then keeps the capability surface in `capabilities/` honest.

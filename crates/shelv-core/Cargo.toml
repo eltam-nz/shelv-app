@@ -1,0 +1,15 @@
+[package]
+name = "shelv-core"
+description = "Backup engine, storage and platform abstraction for Shelv. Contains no GUI or Tauri dependency."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+ts-rs = { workspace = true }
