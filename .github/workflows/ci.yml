@@ -99,8 +99,29 @@ jobs:
       - run: pnpm build
 
       - run: cargo fmt --all --check
+      # --all-targets compiles the test binaries too, so a broken test still
+      # fails the build on both platforms even where it is not executed.
       - run: cargo clippy --workspace --all-targets -- -D warnings
-      - run: cargo test --workspace
+
+      - name: Test
+        if: runner.os != 'Windows'
+        run: cargo test --workspace
+
+      # The shell crate's tests cannot run on Windows. Its test binary lands
+      # in target\debug\deps\, but WebView2Loader.dll — a load-time import
+      # of anything linking Tauri — is only copied next to the main binary in
+      # target\debug\. The test binary then resolves a different loader from
+      # PATH and dies with STATUS_ENTRYPOINT_NOT_FOUND before running a
+      # single test.
+      #
+      # Nothing is lost by scoping this. Everything Windows-specific lives in
+      # shelv-core, which is still fully tested here. The shell's tests cover
+      # Tauri's ACL and parse JSON config — neither varies by platform, and
+      # both run on Linux.
+      - name: Test (core only — see comment)
+        if: runner.os == 'Windows'
+        run: cargo test -p shelv-core
+
       - run: cargo build --workspace --release
 
       # Rust is the source of truth for the IPC types. Run it on one platform

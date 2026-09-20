@@ -116,16 +116,28 @@ impl UnixFs {
     /// Maps canonical device paths to filesystem UUIDs, by resolving the
     /// symlinks under `/dev/disk/by-uuid`.
     fn uuid_map() -> HashMap<PathBuf, String> {
+        Self::disk_alias_map("/dev/disk/by-uuid")
+    }
+
+    /// Maps canonical device paths to filesystem labels, from
+    /// `/dev/disk/by-label`. A volume with no label simply has no entry.
+    fn label_map() -> HashMap<PathBuf, String> {
+        Self::disk_alias_map("/dev/disk/by-label")
+    }
+
+    /// Resolves one of udev's `/dev/disk/by-*` directories into a map from
+    /// the real device path to the alias.
+    fn disk_alias_map(dir: &str) -> HashMap<PathBuf, String> {
         let mut map = HashMap::new();
-        let Ok(entries) = std::fs::read_dir("/dev/disk/by-uuid") else {
+        let Ok(entries) = std::fs::read_dir(dir) else {
             return map;
         };
         for entry in entries.flatten() {
             let Ok(target) = std::fs::canonicalize(entry.path()) else {
                 continue;
             };
-            let uuid = entry.file_name().to_string_lossy().into_owned();
-            map.insert(target, uuid);
+            let alias = entry.file_name().to_string_lossy().into_owned();
+            map.insert(target, alias);
         }
         map
     }
@@ -169,13 +181,18 @@ impl UnixFs {
         }
     }
 
-    fn to_volume(mount: &Mount, uuids: &HashMap<PathBuf, String>) -> VolumeInfo {
+    fn to_volume(
+        mount: &Mount,
+        uuids: &HashMap<PathBuf, String>,
+        labels: &HashMap<PathBuf, String>,
+    ) -> VolumeInfo {
         let canonical = std::fs::canonicalize(&mount.device).unwrap_or_else(|_| {
             // A device we cannot canonicalise still deserves an entry, so the
             // UI can show it as unusable rather than omitting it silently.
             PathBuf::from(&mount.device)
         });
         let uuid = uuids.get(&canonical).cloned();
+        let label = labels.get(&canonical).cloned();
 
         let case_sensitivity = if CASE_INSENSITIVE_FS
             .iter()
@@ -210,7 +227,7 @@ impl UnixFs {
             identity,
             mount_point: mount.mount_point.clone(),
             serial: None,
-            label: None,
+            label,
             filesystem: Some(mount.fstype.clone()),
             drive_type: Self::classify(mount),
             case_sensitivity,
@@ -222,11 +239,12 @@ impl UnixFs {
 impl PlatformFs for UnixFs {
     fn volumes(&self) -> Result<Vec<VolumeInfo>> {
         let uuids = Self::uuid_map();
+        let labels = Self::label_map();
         Ok(self
             .read_mounts()?
             .iter()
             .filter(|m| !PSEUDO_FS.iter().any(|p| m.fstype == *p))
-            .map(|m| Self::to_volume(m, &uuids))
+            .map(|m| Self::to_volume(m, &uuids, &labels))
             .collect())
     }
 

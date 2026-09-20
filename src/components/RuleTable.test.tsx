@@ -103,21 +103,64 @@ describe("RuleTable", () => {
     }
   });
 
-  it("enables Backup Now only when the rule can actually run", () => {
+  it("never offers Backup Now while the engine does not exist", () => {
+    // A button that looks operational and silently does nothing is worse
+    // than no button here: someone would believe a backup had run. Until
+    // the engine lands in M1, every one of these is disabled — including
+    // for rules that are otherwise perfectly runnable.
     render(<RuleTable rows={sampleRows()} />);
     const buttons = screen.getAllByRole("button", { name: "Backup Now" });
-
-    // Phone Photos (available) and Documents (one of two destinations
-    // available) can run. The rest cannot.
-    const enabled = buttons.filter((b) => !b.hasAttribute("disabled"));
-    expect(enabled).toHaveLength(2);
+    expect(buttons).toHaveLength(6);
+    for (const button of buttons) {
+      expect(button).toBeDisabled();
+    }
   });
 
-  it("keeps Backup Now disabled for a disabled rule", () => {
-    const rows = sampleRows().filter((r) => !r.rule.spec.enabled);
-    expect(rows).toHaveLength(1);
-    render(<RuleTable rows={rows} />);
-    expect(screen.getByRole("button", { name: "Backup Now" })).toBeDisabled();
+  it("says whether a rule could have run, separately from the engine being absent", () => {
+    // "Not built yet" and "this rule could not run anyway" are different
+    // things to know, so the reason distinguishes them even though the
+    // button is disabled either way.
+    render(<RuleTable rows={sampleRows()} />);
+    const titles = screen
+      .getAllByRole("button", { name: "Backup Now" })
+      .map((b) => b.getAttribute("title") ?? "");
+
+    // Phone Photos and Documents each have a reachable destination.
+    expect(
+      titles.filter((t) => t.startsWith("Running backups is not built")),
+    ).toHaveLength(2);
+    expect(titles.filter((t) => t.startsWith("This rule could not run"))).toHaveLength(4);
+  });
+
+  it("opens the editor for the row whose Edit Rule was pressed", async () => {
+    const user = userEvent.setup();
+    const edited: string[] = [];
+    render(
+      <RuleTable rows={sampleRows()} onEdit={(row) => edited.push(row.rule.spec.name)} />,
+    );
+
+    const buttons = screen.getAllByRole("button", { name: "Edit Rule" });
+    const third = buttons[2];
+    expect(third).toBeDefined();
+    if (third) await user.click(third);
+
+    expect(edited).toEqual(["Phone Photos"]);
+  });
+
+  it("offers rule creation from the empty state", async () => {
+    const user = userEvent.setup();
+    let created = 0;
+    render(
+      <RuleTable
+        rows={[]}
+        onCreate={() => {
+          created += 1;
+        }}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "New rule" }));
+    expect(created).toBe(1);
   });
 
   it("sorts Last Backup by timestamp, not by its formatted text", async () => {
