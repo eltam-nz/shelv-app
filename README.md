@@ -26,6 +26,36 @@ so nothing is copied yet.
 - **Dry run** preview, exclude patterns, preflight free-space checks and per-run history.
 - Runs in the background from the system tray.
 
+## Trying it
+
+Every push builds a Windows executable. To get one:
+
+1. Open the [Actions tab](https://github.com/eltam-nz/shelv-app/actions), pick
+   the most recent run on `main`, and scroll to **Artifacts**.
+2. Download `shelv-windows-x64-…` and unzip it.
+3. Run `shelv.exe`. There is nothing to install — the whole app is that one
+   file, and deleting it removes it.
+
+Windows SmartScreen will warn on first run, because the build is unsigned.
+*More info → Run anyway*. See [`docs/PLAN.md`](docs/PLAN.md) §3.4 for why, and
+what signing would cost.
+
+Shelv keeps its database in `%LOCALAPPDATA%\Shelv`. Deleting that folder
+resets it completely.
+
+### What you can do today
+
+Create backup rules, choose folders through the native picker, tag them, edit
+and delete them. Rules are checked as you write them: a destination inside its
+own source, a drive Shelv will not write to, a missing name.
+
+**Nothing is copied yet.** The backup engine is the next milestone, so
+*Backup Now* is disabled everywhere and the status bar says so. That also
+means running it is safe in the strongest sense — there is no code in it that
+writes to, deletes or moves any file outside its own database.
+
+To build from source instead, see [`CONTRIBUTING.md`](CONTRIBUTING.md).
+
 ## OneDrive
 
 Shelv backs up cloud-only OneDrive files. Where a file is a Files On-Demand

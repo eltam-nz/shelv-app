@@ -124,6 +124,23 @@ jobs:
 
       - run: cargo build --workspace --release
 
+      # Makes the app testable without a Rust and Node toolchain, which is
+      # otherwise the only way to get a runnable binary before M5 brings
+      # installers. A portable exe rather than an installer: nothing to
+      # install or uninstall, and the frontend is embedded in it by the Tauri
+      # build script, so it is the whole app in one file.
+      #
+      # Unsigned, so Windows SmartScreen will warn on first run. That is
+      # expected until the signing decision in docs/PLAN.md §3.4 is revisited.
+      - name: Upload the Windows build
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: shelv-windows-x64-${{ github.sha }}
+          path: target/release/shelv.exe
+          if-no-files-found: error
+          retention-days: 14
+
       # Rust is the source of truth for the IPC types. Run it on one platform
       # only: the generated output does not vary by OS, and the check writes
       # into the working tree.
