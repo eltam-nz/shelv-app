@@ -18,7 +18,7 @@ tracing = "0.1"
 ts-rs = "11"
 
 [workspace.lints.rust]
-unsafe_code = "forbid"
+unsafe_code = "deny"
 missing_docs = "warn"
 unused_qualifications = "warn"
 
