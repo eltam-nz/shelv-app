@@ -21,11 +21,14 @@ use std::sync::Mutex;
 
 use shelv_core::model::{Rule, RuleId, RuleSpec, Run, Tag, TagId, VolumePath};
 use shelv_core::platform::PlatformFs;
+use shelv_core::safety::{check_rule, RuleProblem};
 use shelv_core::store::Store;
 use shelv_core::view::{rule_rows, volume_statuses, RuleRow, VolumeStatus};
+use shelv_core::volumes::{resolve_picked_folder, PickedFolder};
 use shelv_core::{CoreError, Result};
 use tauri::ipc::Invoke;
-use tauri::{Runtime, State};
+use tauri::{AppHandle, Runtime, State};
+use tauri_plugin_dialog::DialogExt;
 
 /// Everything the commands need, owned by the Tauri app.
 pub struct AppState {
@@ -90,16 +93,94 @@ fn get_rule(state: State<'_, AppState>, id: RuleId) -> Result<RuleRow> {
     })
 }
 
-/// Creates a rule and returns its id.
+/// Opens the native folder dialog and resolves the choice against its volume.
+///
+/// This is the only way a location enters Shelv. The dialog is the operating
+/// system's own consent step, and what comes back is a volume id plus a
+/// relative path — never something the frontend could have invented
+/// (`docs/PLAN.md` §4.2). Returns `None` if the user cancelled.
+///
+/// Registering the volume is a side effect of picking: until a folder is
+/// chosen on a drive, Shelv has no record of it at all.
 #[tauri::command]
-fn create_rule(state: State<'_, AppState>, spec: RuleSpec) -> Result<RuleId> {
-    state.with_store(|store| store.create_rule(&spec, now()))
+async fn pick_folder<R: Runtime>(
+    app: AppHandle<R>,
+    state: State<'_, AppState>,
+) -> Result<Option<PickedFolder>> {
+    // Blocking is correct here: Tauri runs async commands off the main
+    // thread, and the non-blocking form would deadlock the event loop.
+    let Some(chosen) = app.dialog().file().blocking_pick_folder() else {
+        return Ok(None);
+    };
+
+    let path = chosen.into_path().map_err(|e| {
+        CoreError::Invalid(format!("the chosen folder is not a filesystem path: {e}"))
+    })?;
+
+    state
+        .with_store(|store| resolve_picked_folder(store, state.fs.as_ref(), &path, now()))
+        .map(Some)
 }
 
-/// Replaces a rule's configuration.
+/// Checks a rule without saving it, so the editor can show problems as they
+/// are introduced rather than only on save.
 #[tauri::command]
-fn update_rule(state: State<'_, AppState>, id: RuleId, spec: RuleSpec) -> Result<()> {
-    state.with_store(|store| store.update_rule(id, &spec))
+fn validate_rule(
+    state: State<'_, AppState>,
+    spec: RuleSpec,
+    destinations: Vec<VolumePath>,
+) -> Result<Vec<RuleProblem>> {
+    state.with_store(|store| Ok(validate(store, state.fs.as_ref(), &spec, &destinations)))
+}
+
+/// Creates a rule and its destinations, refusing one that would not be safe
+/// to run.
+///
+/// Validation happens here as well as in the editor, because a rule is a
+/// standing instruction: by the time the engine acts on it, whoever wrote it
+/// is usually not watching.
+#[tauri::command]
+fn create_rule(
+    state: State<'_, AppState>,
+    spec: RuleSpec,
+    destinations: Vec<VolumePath>,
+    tags: Vec<TagId>,
+) -> Result<RuleId> {
+    state.with_store(|store| {
+        refuse_if_unsafe(store, state.fs.as_ref(), &spec, &destinations)?;
+        let id = store.create_rule(&spec, now())?;
+        for (order, destination) in destinations.iter().enumerate() {
+            store.add_destination(id, destination, i64::try_from(order).unwrap_or(i64::MAX))?;
+        }
+        store.set_rule_tags(id, &tags)?;
+        Ok(id)
+    })
+}
+
+/// Replaces a rule's configuration, destinations and tags.
+#[tauri::command]
+fn update_rule(
+    state: State<'_, AppState>,
+    id: RuleId,
+    spec: RuleSpec,
+    destinations: Vec<VolumePath>,
+    tags: Vec<TagId>,
+) -> Result<()> {
+    state.with_store(|store| {
+        refuse_if_unsafe(store, state.fs.as_ref(), &spec, &destinations)?;
+        store.update_rule(id, &spec)?;
+
+        // Replace the destination set. Existing rows are removed rather than
+        // reconciled, since a destination carries no state worth preserving
+        // — run history points at the rule, not at the destination row.
+        for existing in store.destinations(id)? {
+            store.delete_destination(existing.id)?;
+        }
+        for (order, destination) in destinations.iter().enumerate() {
+            store.add_destination(id, destination, i64::try_from(order).unwrap_or(i64::MAX))?;
+        }
+        store.set_rule_tags(id, &tags)
+    })
 }
 
 /// Deletes a rule, along with its destinations, tag links and run history.
@@ -176,6 +257,57 @@ fn get_rule_spec(state: State<'_, AppState>, id: RuleId) -> Result<Rule> {
     state.with_store(|store| store.rule(id))
 }
 
+/// Runs the safety guards against a rule, resolving each volume's current
+/// status so the guards can refuse an unusable one.
+fn validate(
+    store: &Store,
+    fs: &dyn PlatformFs,
+    spec: &RuleSpec,
+    destinations: &[VolumePath],
+) -> Vec<RuleProblem> {
+    let statuses = volume_statuses(store, fs).unwrap_or_default();
+    let status_for = |id| statuses.iter().find(|s| s.volume.id == id);
+
+    // Containment has to be compared the way the source filesystem does, or
+    // "Pictures/Backups" inside "pictures" slips through on NTFS.
+    let case_insensitive = store
+        .volume(spec.source.volume)
+        .ok()
+        .and_then(|v| v.filesystem)
+        .is_some_and(|fs_name| {
+            ["ntfs", "exfat", "vfat", "fat32", "msdos"]
+                .iter()
+                .any(|f| fs_name.eq_ignore_ascii_case(f))
+        });
+
+    let destination_statuses: Vec<_> = destinations.iter().map(|d| status_for(d.volume)).collect();
+
+    check_rule(
+        spec,
+        destinations,
+        status_for(spec.source.volume),
+        &destination_statuses,
+        case_insensitive,
+    )
+}
+
+/// Refuses to save a rule that the guards reject.
+fn refuse_if_unsafe(
+    store: &Store,
+    fs: &dyn PlatformFs,
+    spec: &RuleSpec,
+    destinations: &[VolumePath],
+) -> Result<()> {
+    let problems = validate(store, fs, spec, destinations);
+    if problems.is_empty() {
+        return Ok(());
+    }
+    Err(CoreError::Refused(
+        serde_json::to_string(&problems)
+            .unwrap_or_else(|_| "this rule is not safe to run".to_owned()),
+    ))
+}
+
 /// Seconds since the Unix epoch.
 ///
 /// A clock before 1970 yields 0 rather than panicking; a wrong timestamp is
@@ -193,6 +325,8 @@ fn now() -> i64 {
 pub fn handlers<R: Runtime>() -> impl Fn(Invoke<R>) -> bool + Send + Sync + 'static {
     tauri::generate_handler![
         app_version,
+        pick_folder,
+        validate_rule,
         list_rules,
         get_rule,
         get_rule_spec,

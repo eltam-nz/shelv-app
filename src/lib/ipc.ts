@@ -17,8 +17,10 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   CoreError,
   DestinationId,
+  PickedFolder,
   Rule,
   RuleId,
+  RuleProblem,
   RuleRow,
   RuleSpec,
   Run,
@@ -92,13 +94,56 @@ export const getRule = (id: RuleId): Promise<RuleRow> =>
 export const getRuleSpec = (id: RuleId): Promise<Rule> =>
   call<Rule>("get_rule_spec", { id });
 
-/** Creates a rule. */
-export const createRule = (spec: RuleSpec): Promise<RuleId> =>
-  call<RuleId>("create_rule", { spec });
+/**
+ * Opens the native folder dialog.
+ *
+ * The only way a location enters Shelv: the dialog is the operating system's
+ * consent step, and what comes back is a volume id plus a relative path,
+ * never something this side could have invented. Resolves to `null` if the
+ * user cancelled, and rejects with a `refused` error if the drive is one
+ * Shelv will not use.
+ */
+export const pickFolder = (): Promise<PickedFolder | null> =>
+  call<PickedFolder | null>("pick_folder");
 
-/** Replaces a rule's configuration. */
-export const updateRule = (id: RuleId, spec: RuleSpec): Promise<void> =>
-  callVoid("update_rule", { id, spec });
+/** Checks a rule without saving it, so the editor can show problems early. */
+export const validateRule = (
+  spec: RuleSpec,
+  destinations: VolumePath[],
+): Promise<RuleProblem[]> => call<RuleProblem[]>("validate_rule", { spec, destinations });
+
+/** Creates a rule with its destinations and tags. */
+export const createRule = (
+  spec: RuleSpec,
+  destinations: VolumePath[],
+  tags: TagId[],
+): Promise<RuleId> => call<RuleId>("create_rule", { spec, destinations, tags });
+
+/** Replaces a rule's configuration, destinations and tags. */
+export const updateRule = (
+  id: RuleId,
+  spec: RuleSpec,
+  destinations: VolumePath[],
+  tags: TagId[],
+): Promise<void> => callVoid("update_rule", { id, spec, destinations, tags });
+
+/**
+ * Parses the problem list out of a refusal from create or update.
+ *
+ * The backend validates again on save, because a rule is a standing
+ * instruction and the editor's copy of the rules could be stale. It reports
+ * the failures as JSON in the error message; this turns them back into
+ * something renderable, and yields an empty list for any other refusal.
+ */
+export function problemsFrom(error: unknown): RuleProblem[] {
+  if (!(error instanceof ShelvError) || error.kind !== "refused") return [];
+  try {
+    const parsed: unknown = JSON.parse(error.message);
+    return Array.isArray(parsed) ? (parsed as RuleProblem[]) : [];
+  } catch {
+    return [];
+  }
+}
 
 /**
  * Deletes a rule.
