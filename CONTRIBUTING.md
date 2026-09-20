@@ -128,3 +128,34 @@ the check.
 and a word as well as a hue, so the table stays legible in greyscale and to a
 colour-blind reader. Tags store a palette token such as `pastel-blue`, never a
 raw colour, which is what lets the theme guarantee readability.
+
+## Repository conventions
+
+- `main` is protected. Changes land through a pull request with CI green.
+- Squash merges, so `main` reads as one commit per change.
+- [Conventional Commits](https://www.conventionalcommits.org/) for the subject
+  line: `feat:`, `fix:`, `docs:`, `chore:`, `test:`, `build:`, with an optional
+  scope such as `feat(core):`.
+- Releases are tagged `vX.Y.Z`, which is what triggers the release workflow.
+
+### Dependencies
+
+Dependabot watches cargo, npm and GitHub Actions weekly. Actions are pinned by
+commit SHA — a tag is mutable and can be repointed at different code — so
+Dependabot is the only thing that moves them, and without it a security fix
+would never arrive.
+
+`@tanstack/react-table` is held at v8 deliberately and major updates are
+ignored; see the task #9 commit for why.
+
+### Nothing may assume the repository stays private
+
+It is private today and may not be later (`docs/PLAN.md` §4.4). So:
+
+- no real paths from a developer's machine in fixtures, tests or documentation;
+- no keys, tokens or credentials, including in commit history, where they
+  would survive deletion of the file;
+- no personal identifiers.
+
+Shelv has no credentials of its own to leak — it never authenticates to
+anything — but the repository still must not acquire any.

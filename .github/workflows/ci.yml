@@ -1,0 +1,126 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# A new push supersedes an in-flight run on the same ref. `main` is excluded
+# so the history of what passed there stays complete.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  # A backup tool has no business fetching anything at build time beyond its
+  # declared dependencies.
+  CARGO_NET_GIT_FETCH_WITH_CLI: true
+
+jobs:
+  # Everything that does not need a Rust toolchain, so a formatting slip is
+  # reported in a minute rather than after a full build.
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm format:check
+      - run: pnpm typecheck
+      - run: pnpm test
+      # Pastels on dark fail WCAG easily, and by eye they look fine. See
+      # docs/PLAN.md §2.5.
+      - run: pnpm check:contrast
+      - run: pnpm build
+
+  # Cheap invariants that do not need a build at all.
+  boundaries:
+    name: Boundaries
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # Keeps OS-specific code inside platform/, which is what makes the
+      # eventual Linux port cheap (docs/PLAN.md §2.6).
+      - run: ./scripts/check-platform-boundary.sh
+
+  rust:
+    name: Rust (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The shipping target.
+          - os: windows-latest
+          # Not a release target for v1, but building here is what stops the
+          # platform abstraction rotting while nobody is looking.
+          - os: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # v1
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: ${{ matrix.os }}
+
+      # Tauri's Linux build needs a WebView and a GTK stack; Windows has
+      # WebView2 already.
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libgtk-3-dev \
+            libayatana-appindicator3-dev librsvg2-dev patchelf
+
+      # The frontend must exist before the Tauri crate compiles, because the
+      # build script embeds ../dist.
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace
+      - run: cargo build --workspace --release
+
+      # Rust is the source of truth for the IPC types. Run it on one platform
+      # only: the generated output does not vary by OS, and the check writes
+      # into the working tree.
+      - name: Check generated TypeScript is current
+        if: runner.os == 'Linux'
+        run: ./scripts/check-generated-types.sh
+
+  # Separate job so an advisory published upstream does not mask a genuine
+  # build failure, and vice versa.
+  audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        with:
+          command: check
+          # Explicit so a new check type added upstream does not start
+          # failing CI without anyone deciding to adopt it.
+          arguments: --all-features
+          command-arguments: advisories bans licenses sources

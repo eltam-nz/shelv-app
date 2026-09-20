@@ -1,0 +1,55 @@
+version: 2
+
+updates:
+  # Rust. The dependency surface is deliberately small (docs/PLAN.md §4, T9),
+  # so weekly is frequent enough to stay current without churn.
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      # One PR for the Tauri family: its crates are released together and
+      # bumping them separately produces a broken intermediate state.
+      tauri:
+        patterns:
+          - "tauri"
+          - "tauri-*"
+      rust-patch:
+        update-types:
+          - patch
+
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      tauri-js:
+        patterns:
+          - "@tauri-apps/*"
+      react:
+        patterns:
+          - "react"
+          - "react-dom"
+          - "@types/react"
+          - "@types/react-dom"
+      dev-patch:
+        dependency-type: development
+        update-types:
+          - patch
+    ignore:
+      # Pinned to v8 on purpose: v9 is a redesign around atoms and explicit
+      # feature composition, and v8 is sufficient for this table. Revisit
+      # deliberately rather than by bot (see the task #9 commit).
+      - dependency-name: "@tanstack/react-table"
+        update-types:
+          - version-update:semver-major
+
+  # Actions are pinned by commit SHA, so this is the only thing that moves
+  # them. Without it they would stay frozen, including through a security fix.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
