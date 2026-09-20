@@ -30,6 +30,7 @@ Every one of these runs in CI and must pass before merge.
 | Frontend build | `pnpm build` |
 | Platform boundary | `./scripts/check-platform-boundary.sh` |
 | Generated types | `./scripts/check-generated-types.sh` |
+| Palette contrast | `pnpm check:contrast` |
 | Windows cross-check | `cargo clippy -p shelv-core --target x86_64-pc-windows-gnu --all-targets -- -D warnings` |
 
 `pnpm format` rewrites files in place; `cargo fmt --all` does the same for Rust.
@@ -100,3 +101,29 @@ CI builds the real `x86_64-pc-windows-msvc` target on `windows-latest`; the GNU
 triple is a local convenience, not a release target. It is used rather than
 MSVC here because `rusqlite`'s bundled SQLite needs a C compiler, and mingw
 cross-compiles where the MSVC toolchain is unavailable.
+
+## Colour
+
+`src/styles/theme.css` holds every colour as a CSS custom property. Nothing
+else defines one — components reference the tokens, and Tailwind utilities are
+mapped onto the same tokens in `global.css`, so there is a single place to
+verify.
+
+`pnpm check:contrast` reads that file, composites each translucent chip fill
+over its surface, and computes WCAG 2.1 ratios:
+
+- **4.5:1** for text (1.4.3)
+- **3.0:1** for a boundary that identifies a control or its state (1.4.11) —
+  input borders and the focus ring
+- **1.3:1** for a purely decorative divider. 1.4.11 does not reach these, since
+  the table is delineated by spacing and content rather than by gridlines, but
+  an invisible divider is still a bug.
+
+Pastels on a dark background are easy to get wrong: they look fine on a good
+monitor and fail for everyone else. Do not eyeball them — add the token and run
+the check.
+
+**Colour is never the only carrier of meaning.** Every status renders an icon
+and a word as well as a hue, so the table stays legible in greyscale and to a
+colour-blind reader. Tags store a palette token such as `pastel-blue`, never a
+raw colour, which is what lets the theme guarantee readability.

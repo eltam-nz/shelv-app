@@ -1,0 +1,73 @@
+/**
+ * Shelv's palette.
+ *
+ * A dark neutral base with pastel accents. Every value here is verified by
+ * scripts/check-contrast.mjs, which reads this file, composites the
+ * translucent chip fills over their surface, and fails CI below WCAG AA.
+ * Pastels on dark are easy to get wrong by eye, so nothing is eyeballed.
+ *
+ * Colour is never the only carrier of meaning: status is always an icon and a
+ * word as well as a hue, so the table stays readable in greyscale and to a
+ * colour-blind reader.
+ */
+
+:root {
+  /* Neutrals, darkest to lightest. */
+  --bg: #14161a;
+  --surface: #1b1e24;
+  --surface-raised: #23272f;
+  /* A row divider is decoration: WCAG 1.4.11 covers boundaries that identify
+     a component or its state, which these do not — the table is already
+     delineated by spacing and content. It only has to be perceptible. */
+  --border: #2f343d;
+  /* These do identify a control or its state, so they clear 3:1. */
+  --border-strong: #78828f;
+  --focus: #a8cbfd;
+
+  --fg: #e6e8ec;
+  --fg-muted: #a9b1bd;
+
+  /* Pastel accents. Light enough to clear 4.5:1 as text on their own chip,
+     which is the demanding case — the chip fill lifts the background. */
+  --accent-blue: #a8cbfd;
+  --accent-mint: #9fe3c0;
+  --accent-rose: #f6aebc;
+  --accent-amber: #f0cb92;
+  --accent-lilac: #c9bdf5;
+  --accent-teal: #93dbdd;
+  --accent-peach: #f7bda2;
+  --accent-sage: #bdd7a1;
+
+  /* Chip fills: the same hue at low alpha, composited over --surface. */
+  --accent-blue-fill: rgb(168 203 253 / 0.14);
+  --accent-mint-fill: rgb(159 227 192 / 0.14);
+  --accent-rose-fill: rgb(246 174 188 / 0.14);
+  --accent-amber-fill: rgb(240 203 146 / 0.14);
+  --accent-lilac-fill: rgb(201 189 245 / 0.14);
+  --accent-teal-fill: rgb(147 219 221 / 0.14);
+  --accent-peach-fill: rgb(247 189 162 / 0.14);
+  --accent-sage-fill: rgb(189 215 161 / 0.14);
+
+  /* Semantic aliases. Status maps onto the accents above so there is one
+     palette to verify, not two. */
+  --status-available: var(--accent-mint);
+  --status-available-fill: var(--accent-mint-fill);
+  --status-disconnected: var(--fg-muted);
+  --status-refused: var(--accent-amber);
+  --status-refused-fill: var(--accent-amber-fill);
+  --status-mismatch: var(--accent-rose);
+  --status-mismatch-fill: var(--accent-rose-fill);
+
+  --result-ok: var(--accent-mint);
+  --result-partial: var(--accent-amber);
+  --result-failed: var(--accent-rose);
+  --result-never: var(--fg-muted);
+
+  /* Layout. */
+  --radius: 6px;
+  --radius-sm: 4px;
+  --header-height: 52px;
+  --statusbar-height: 28px;
+
+  color-scheme: dark;
+}

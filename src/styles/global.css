@@ -1,14 +1,32 @@
-/* Placeholder only. The real palette, with its contrast checks, lands in
-   task #8; these few tokens exist so the scaffold is not unstyled white. */
-:root {
-  --bg: #14161a;
-  --fg: #e6e8ec;
-  --muted: #9aa1ad;
-  color-scheme: dark;
+@import "tailwindcss";
+@import "./theme.css";
+
+/* Expose the palette to Tailwind utilities, so `text-accent-mint` and
+   `bg-surface` resolve to the same tokens the contrast check verifies. */
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-raised: var(--surface-raised);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-focus: var(--focus);
+  --color-fg: var(--fg);
+  --color-fg-muted: var(--fg-muted);
+
+  --color-accent-blue: var(--accent-blue);
+  --color-accent-mint: var(--accent-mint);
+  --color-accent-rose: var(--accent-rose);
+  --color-accent-amber: var(--accent-amber);
+  --color-accent-lilac: var(--accent-lilac);
+  --color-accent-teal: var(--accent-teal);
+  --color-accent-peach: var(--accent-peach);
+  --color-accent-sage: var(--accent-sage);
 }
 
-* {
-  box-sizing: border-box;
+html,
+body,
+#root {
+  height: 100%;
 }
 
 body {
@@ -16,15 +34,28 @@ body {
   background: var(--bg);
   color: var(--fg);
   font:
-    14px/1.5 system-ui,
+    13px/1.5 system-ui,
     -apple-system,
     "Segoe UI",
     sans-serif;
+  -webkit-font-smoothing: antialiased;
 }
 
-.shell {
-  padding: 2rem;
+/* One visible focus style everywhere. The ring clears 3:1 (WCAG 1.4.11);
+   removing it would leave keyboard users with no position indicator. */
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
 }
-.muted {
-  color: var(--muted);
+
+/* Respect a reduced-motion preference rather than animating regardless. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

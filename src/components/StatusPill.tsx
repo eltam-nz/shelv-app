@@ -1,0 +1,124 @@
+import type { Availability, RunResult } from "../types";
+
+/**
+ * Status indicators.
+ *
+ * Every pill carries an icon *and* a word, not just a colour. The rule table
+ * is the whole UI, and a reader who cannot distinguish the hues — or who
+ * prints the window — still has to be able to tell a working backup from a
+ * broken one.
+ */
+
+interface PillProps {
+  /** A short glyph, readable without colour. */
+  icon: string;
+  /** The word. Never omitted. */
+  label: string;
+  /** Text colour token. */
+  color: string;
+  /** Chip background token, or none for the neutral state. */
+  fill?: string;
+  /** Longer explanation, surfaced on hover and to assistive tech. */
+  title?: string;
+}
+
+function Pill({ icon, label, color, fill, title }: PillProps) {
+  return (
+    <span
+      className="inline-flex items-center gap-1.5 rounded px-2 py-0.5 text-xs whitespace-nowrap"
+      style={{ color, backgroundColor: fill ?? "transparent" }}
+      title={title ?? label}
+    >
+      <span aria-hidden="true">{icon}</span>
+      {label}
+    </span>
+  );
+}
+
+const AVAILABILITY: Record<Availability, Omit<PillProps, "title"> & { title: string }> = {
+  available: {
+    icon: "●",
+    label: "Available",
+    color: "var(--status-available)",
+    fill: "var(--status-available-fill)",
+    title: "Attached and ready to write",
+  },
+  disconnected: {
+    icon: "○",
+    label: "Disconnected",
+    color: "var(--status-disconnected)",
+    title: "Not currently attached. Plug the drive in to run this rule.",
+  },
+  refused: {
+    icon: "⊘",
+    label: "Refused",
+    color: "var(--status-refused)",
+    fill: "var(--status-refused-fill)",
+    title:
+      "Attached, but Shelv does not back up to this kind of volume — network shares, optical media and unclassifiable drives are excluded.",
+  },
+  // The dangerous one. Worded so it is obvious this is not just "unplugged":
+  // something IS mounted there, and writing to it would be a mistake.
+  identity_mismatch: {
+    icon: "⚠",
+    label: "Different drive",
+    color: "var(--status-mismatch)",
+    fill: "var(--status-mismatch-fill)",
+    title:
+      "A drive is mounted where this destination used to be, but it is not the same drive. Shelv will not write to it.",
+  },
+};
+
+/** Whether a destination can be written to, and if not, why. */
+export function AvailabilityPill({ availability }: { availability: Availability }) {
+  const spec = AVAILABILITY[availability];
+  return <Pill {...spec} />;
+}
+
+const RESULT: Record<RunResult, Omit<PillProps, "title"> & { title: string }> = {
+  ok: {
+    icon: "✓",
+    label: "OK",
+    color: "var(--result-ok)",
+    title: "Every file was copied",
+  },
+  partial: {
+    icon: "!",
+    label: "Partial",
+    color: "var(--result-partial)",
+    title: "The run finished, but some files could not be read or written",
+  },
+  failed: {
+    icon: "✕",
+    label: "Failed",
+    color: "var(--result-failed)",
+    title: "The run did not complete",
+  },
+  cancelled: {
+    icon: "–",
+    label: "Cancelled",
+    color: "var(--result-never)",
+    title: "The run was stopped before it finished",
+  },
+};
+
+/**
+ * How the last run ended.
+ *
+ * `null` means the rule has never run, which is deliberately distinct from
+ * having run and failed — the mock-up's date-only column could not express
+ * the difference (docs/PLAN.md §1.1e).
+ */
+export function RunResultPill({ result }: { result: RunResult | null }) {
+  if (result === null) {
+    return (
+      <Pill
+        icon="·"
+        label="Never run"
+        color="var(--result-never)"
+        title="This rule has not run yet"
+      />
+    );
+  }
+  return <Pill {...RESULT[result]} />;
+}

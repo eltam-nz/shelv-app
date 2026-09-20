@@ -52,7 +52,9 @@ export default tseslint.config(
   },
   {
     // Config files run in Node and are not part of the app's type graph.
-    files: ["*.config.{js,ts}", "eslint.config.js"],
+    // Build and check scripts run in Node and are outside the app's type
+    // graph, so the type-aware rules have nothing to work from.
+    files: ["*.config.{js,ts}", "eslint.config.js", "scripts/**/*.{js,mjs}"],
     languageOptions: { globals: globals.node },
     extends: [tseslint.configs.disableTypeChecked],
   },
