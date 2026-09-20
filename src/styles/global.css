@@ -7,14 +7,24 @@
   color-scheme: dark;
 }
 
-* { box-sizing: border-box; }
+* {
+  box-sizing: border-box;
+}
 
 body {
   margin: 0;
   background: var(--bg);
   color: var(--fg);
-  font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+  font:
+    14px/1.5 system-ui,
+    -apple-system,
+    "Segoe UI",
+    sans-serif;
 }
 
-.shell { padding: 2rem; }
-.muted { color: var(--muted); }
+.shell {
+  padding: 2rem;
+}
+.muted {
+  color: var(--muted);
+}

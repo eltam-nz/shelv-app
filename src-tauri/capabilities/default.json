@@ -3,9 +3,5 @@
   "identifier": "default",
   "description": "Minimum capability set for the main window. Every permission here must be justified; see docs/PLAN.md §4.2. The fs and shell plugins are deliberately absent — the frontend has no filesystem access, and all path handling happens in shelv-core.",
   "windows": ["main"],
-  "permissions": [
-    "core:default",
-    "dialog:allow-open",
-    "notification:default"
-  ]
+  "permissions": ["core:default", "dialog:allow-open", "notification:default"]
 }

@@ -11,8 +11,12 @@ export function App() {
 
   useEffect(() => {
     invoke<string>("app_version")
-      .then(setVersion)
-      .catch((e: unknown) => setError(String(e)));
+      .then((v) => {
+        setVersion(v);
+      })
+      .catch((e: unknown) => {
+        setError(String(e));
+      });
   }, []);
 
   return (

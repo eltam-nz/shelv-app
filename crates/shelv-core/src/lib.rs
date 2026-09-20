@@ -7,9 +7,6 @@
 //! Platform-specific code is confined to [`platform`] and [`cloud`]; see
 //! `docs/PLAN.md` §2.6. CI enforces that boundary.
 
-#![forbid(unsafe_code)]
-#![warn(missing_docs, clippy::all)]
-
 pub mod cloud;
 pub mod engine;
 pub mod error;

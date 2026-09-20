@@ -4,13 +4,19 @@
 //! logic lives in `shelv-core`, which has no GUI dependency — see
 //! `docs/PLAN.md` §2.2.
 
-#![forbid(unsafe_code)]
-#![warn(missing_docs, clippy::all)]
-
 mod commands;
 
-/// Builds and runs the desktop application.
-pub fn run() {
+/// Fatal startup failures.
+#[derive(Debug, thiserror::Error)]
+pub enum StartupError {
+    /// The Tauri runtime could not be built or run.
+    #[error("could not start the application: {0}")]
+    Runtime(#[from] tauri::Error),
+}
+
+/// Builds and runs the desktop application, returning once the last window
+/// closes.
+pub fn run() -> Result<(), StartupError> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_env("SHELV_LOG")
@@ -22,6 +28,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .invoke_handler(commands::handlers())
-        .run(tauri::generate_context!())
-        .expect("error while running Shelv");
+        .run(tauri::generate_context!())?;
+
+    Ok(())
 }

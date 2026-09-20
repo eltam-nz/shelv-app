@@ -4,7 +4,7 @@ description = "Shelv desktop shell"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-license.workspace = true
+publish.workspace = true
 repository.workspace = true
 
 [lib]
@@ -31,3 +31,6 @@ ts-rs = { workspace = true }
 # The updater, autostart and single-instance plugins are desktop-only and are
 # added in M3/M5 when the features that need them land. Keeping them out until
 # then keeps the capability surface in `capabilities/` honest.
+
+[lints]
+workspace = true

@@ -1,0 +1,5 @@
+# Backup code deals in paths and byte counts; keep the bar high on both.
+disallowed-methods = [
+    { path = "std::path::Path::to_string_lossy", reason = "lossy conversion silently mangles non-UTF-8 paths; keep OsStr/Path end to end (PLAN §2.6)" },
+    { path = "std::fs::copy", reason = "does not use the temp+rename discipline required by PLAN §1.1(g); use engine::copier" },
+]

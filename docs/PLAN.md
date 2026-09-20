@@ -5,14 +5,14 @@
 
 ## Decisions taken
 
-| # | Decision |
-|---|---|
-| Name | **Shelv** |
-| Stack | **Tauri 2 — Rust core, React + TypeScript frontend** |
-| Platform | **Windows-only for v1.** Linux is an explicit future target, so every platform-specific decision is made behind an abstraction from commit one (§2.6) |
-| Code signing | **Ship unsigned for v1.** SmartScreen warning documented in the README |
-| Repository | **Private for now**, possibly public later — so nothing in the code or history may assume privacy (§4.4) |
-| Verification mode | **Deferred to v1.1.** Not in v1 scope |
+| #                 | Decision                                                                                                                                              |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Name              | **Shelv**                                                                                                                                             |
+| Stack             | **Tauri 2 — Rust core, React + TypeScript frontend**                                                                                                  |
+| Platform          | **Windows-only for v1.** Linux is an explicit future target, so every platform-specific decision is made behind an abstraction from commit one (§2.6) |
+| Code signing      | **Ship unsigned for v1.** SmartScreen warning documented in the README                                                                                |
+| Repository        | **Private for now**, possibly public later — so nothing in the code or history may assume privacy (§4.4)                                              |
+| Verification mode | **Deferred to v1.1.** Not in v1 scope                                                                                                                 |
 
 All other recommended features from revision 1 are accepted into v1 scope.
 
@@ -34,18 +34,20 @@ Every general-purpose archive codec (Deflate, zstd, LZMA, bzip2) is lossless by 
 - **Compressing already-compressed data is near-pointless.** RAW, JPEG, PNG and MP4 are already entropy-coded; Deflate typically recovers a low single-digit percentage while costing full-throughput CPU, and it converts a resumable incremental copy into an all-or-nothing archive rewrite. Offer per-rule `None | Store | Deflate`, default **None** for image rules and **Deflate** for document rules, and display the achieved ratio after each run so the setting can be chosen on evidence.
 
 **c) A timestamped-subfolder rule grows without bound.**
-Retention is part of that backup style, not an extra: per-rule `keep last N` and/or `keep newer than N days`, pruning only after a *successful* run.
+Retention is part of that backup style, not an extra: per-rule `keep last N` and/or `keep newer than N days`, pruning only after a _successful_ run.
 
 **d) Frequency alone is the wrong trigger for a removable-drive rule.**
 Four of six rules in the mock-up target an unavailable drive. A "monthly on the 1st" rule whose drive appears on the 3rd never runs. Two behaviours, both small:
-- **Catch-up:** a missed run (machine off, drive absent) executes at the next opportunity rather than being skipped to the next period.
-- **Run on connect:** when a volume a rule depends on appears, queue that rule. For occasionally-connected drives this is the *primary* trigger; frequency becomes "don't run more often than".
 
-**e) The table has no run *result* column.**
+- **Catch-up:** a missed run (machine off, drive absent) executes at the next opportunity rather than being skipped to the next period.
+- **Run on connect:** when a volume a rule depends on appears, queue that rule. For occasionally-connected drives this is the _primary_ trigger; frequency becomes "don't run more often than".
+
+**e) The table has no run _result_ column.**
 "Last Backup: 14-Sept-26" does not say whether it worked. Add `OK / Partial (n skipped) / Failed / Never run` plus a per-run log.
 
 **f) Filesystem differences between source and destination.**
 External drives are often exFAT or FAT32:
+
 - FAT32 stores mtime at 2-second granularity (exFAT 10 ms). Exact-equality mtime comparison re-copies every file every run. Use a 2-second tolerance.
 - NTFS ACLs and alternate data streams do not survive to exFAT. Paths over 260 characters need the `\\?\` prefix or the copy fails — common in Lightroom trees.
 
@@ -56,22 +58,23 @@ Wipe-then-copy leaves no backup at all if interrupted. Mirror is an in-place inc
 
 **Yes, Shelv can download cloud-only files and back them up, and this is now the default.** The mechanism, the constraints and the traps:
 
-**How hydration is triggered.** Reading a placeholder through ordinary `CreateFile`/`ReadFile` — without `FILE_FLAG_OPEN_NO_RECALL` — makes Windows fetch the content from OneDrive automatically. Hydrating therefore requires *no special API*; a normal file copy already does it. The Cloud Files API is only needed to do the opposite (detect and skip), and to release space afterwards. This is the easy direction.
+**How hydration is triggered.** Reading a placeholder through ordinary `CreateFile`/`ReadFile` — without `FILE_FLAG_OPEN_NO_RECALL` — makes Windows fetch the content from OneDrive automatically. Hydrating therefore requires _no special API_; a normal file copy already does it. The Cloud Files API is only needed to do the opposite (detect and skip), and to release space afterwards. This is the easy direction.
 
 **Four constraints that do need engineering:**
 
 1. **Shelv must not run as a Windows service.** Processes in a service context receive `STATUS_CLOUD_FILE_ACCESS_DENIED` (`0xC000CF18`) instead of hydration. Background operation is therefore implemented as a **per-user tray process**, never a service. This was already preferred for privilege hygiene (§4, T9); it is now a correctness requirement.
 
-2. **Windows may ask the user for permission.** Automatic background downloads can raise an interactive toast, and if the user blocks Shelv it stays blocked until re-enabled under *Settings → Automatic file downloads*. Detect that specific denial and surface actionable guidance, not a generic I/O error.
+2. **Windows may ask the user for permission.** Automatic background downloads can raise an interactive toast, and if the user blocks Shelv it stays blocked until re-enabled under _Settings → Automatic file downloads_. Detect that specific denial and surface actionable guidance, not a generic I/O error.
 
 3. **Disk space is the binding constraint.** Hydrating a 500 GB cloud library needs 500 GB of local free space, transiently. Three mitigations, all in v1 scope:
-   - **Preflight:** estimate hydration bytes from the placeholders' logical sizes and check free space on *both* the OneDrive volume and the destination before starting.
+   - **Preflight:** estimate hydration bytes from the placeholders' logical sizes and check free space on _both_ the OneDrive volume and the destination before starting.
    - **Hydrate → copy → release, in bounded batches**, rather than hydrating the whole tree first. Peak local usage stays at roughly the batch size instead of the whole library.
    - **Per-rule hydration budget** — an explicit cap, above which the run stops and reports rather than filling the system disk.
 
-4. **Releasing space afterwards.** `CfSetPinState(CF_PIN_STATE_UNPINNED)` — Microsoft documents that any application, not only the sync provider, may call it — or equivalently `attrib -p +u`. Two cautions: dehydration is a *request*, asynchronous and not guaranteed, so the budget logic must tolerate space being freed lazily; and Shelv must **record each file's pre-existing pin state and only release files it hydrated itself**, never unpinning something the user deliberately keeps offline-available.
+4. **Releasing space afterwards.** `CfSetPinState(CF_PIN_STATE_UNPINNED)` — Microsoft documents that any application, not only the sync provider, may call it — or equivalently `attrib -p +u`. Two cautions: dehydration is a _request_, asynchronous and not guaranteed, so the budget logic must tolerate space being freed lazily; and Shelv must **record each file's pre-existing pin state and only release files it hydrated itself**, never unpinning something the user deliberately keeps offline-available.
 
 **Two known platform bugs to defend against:**
+
 - `CreateFileMapping` forces full hydration regardless of progressive-hydration policy — so use plain sequential reads and **never memory-mapped I/O** on a sync root.
 - Hydration of files of exactly 4096 bytes has been reported to hang. Apply a per-file hydration timeout and record a timeout as a skipped file rather than letting one file block the run.
 
@@ -85,18 +88,18 @@ Cloud placeholders : Hydrate and back up          (default)
                    | Skip placeholders
 ```
 
-Shelv never *writes* into a sync root; OneDrive paths are read-only sources.
+Shelv never _writes_ into a sync root; OneDrive paths are read-only sources.
 
 ### 1.3 Accepted for v1
 
-| Feature | Why |
-|---|---|
-| **Dry run / preview** | Shows files to copy, bytes and *deletions* before anything is touched — the best guard against a mis-configured rule |
-| **Exclude patterns (globs)** | Skip `Thumbs.db`, `*.tmp`, `.lrcat-journal`, `.lrprev`; cuts a Lightroom backup substantially |
-| **Preflight free-space check** | Refuse a run that cannot fit, rather than filling the drive and failing halfway |
-| **Per-run history + log** | Powers the result column in §1.1(e); required for any diagnosis |
-| **Tray icon + desktop notifications** | Background operation; a background backup that fails silently is worse than none |
-| **Import/export rules as JSON** | Config backup and machine migration |
+| Feature                               | Why                                                                                                                  |
+| ------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| **Dry run / preview**                 | Shows files to copy, bytes and _deletions_ before anything is touched — the best guard against a mis-configured rule |
+| **Exclude patterns (globs)**          | Skip `Thumbs.db`, `*.tmp`, `.lrcat-journal`, `.lrprev`; cuts a Lightroom backup substantially                        |
+| **Preflight free-space check**        | Refuse a run that cannot fit, rather than filling the drive and failing halfway                                      |
+| **Per-run history + log**             | Powers the result column in §1.1(e); required for any diagnosis                                                      |
+| **Tray icon + desktop notifications** | Background operation; a background backup that fails silently is worse than none                                     |
+| **Import/export rules as JSON**       | Config backup and machine migration                                                                                  |
 
 ### 1.4 Out of scope for v1
 
@@ -125,7 +128,7 @@ placeholders: Hydrate | HydrateAndRelease | Skip
 
 ### 2.1 Stack
 
-**Tauri 2 — Rust core, React 19 + TypeScript frontend.** The workload is "walk millions of directory entries and copy bytes in parallel, behind a table-heavy UI". Rust handles the first half with `rayon`/`jwalk` and no GC pauses; a web frontend handles the second far faster than XAML. ~10 MB installer, native MSI and NSIS bundling, and a capability system that *enforces* the §4 security constraint rather than relying on convention. Tauri 2 is on the 2.10.x line with active releases through 2026.
+**Tauri 2 — Rust core, React 19 + TypeScript frontend.** The workload is "walk millions of directory entries and copy bytes in parallel, behind a table-heavy UI". Rust handles the first half with `rayon`/`jwalk` and no GC pauses; a web frontend handles the second far faster than XAML. ~10 MB installer, native MSI and NSIS bundling, and a capability system that _enforces_ the §4 security constraint rather than relying on convention. Tauri 2 is on the 2.10.x line with active releases through 2026.
 
 ### 2.2 Components
 
@@ -326,7 +329,7 @@ Use **`ts-rs`** to generate TypeScript types from the Rust structs. It eliminate
 1. **Primary:** download `Shelv_x.y.z_x64-setup.exe` from Releases and run. Per-user install, no admin required.
 2. **Auto-update:** the Tauri updater checks `latest.json` on GitHub Releases and verifies a minisign signature against a public key compiled into the binary. Disableable in settings.
 
-**Unsigned in v1, as decided.** An unsigned installer triggers a Microsoft Defender SmartScreen warning ("Windows protected your PC"). The README documents the *More info → Run anyway* path plainly. Note that this remains sound only while distribution is personal; if Shelv is ever shared publicly, teaching users to click through SmartScreen is a poor default and signing should be revisited. Because the repository is private, GitHub Release assets are not publicly downloadable — updater and download URLs will need authenticated access, or the release process moves to a public repo when the project does.
+**Unsigned in v1, as decided.** An unsigned installer triggers a Microsoft Defender SmartScreen warning ("Windows protected your PC"). The README documents the _More info → Run anyway_ path plainly. Note that this remains sound only while distribution is personal; if Shelv is ever shared publicly, teaching users to click through SmartScreen is a poor default and signing should be revisited. Because the repository is private, GitHub Release assets are not publicly downloadable — updater and download URLs will need authenticated access, or the release process moves to a public repo when the project does.
 
 ### 3.5 Conventions
 
@@ -342,28 +345,28 @@ Use **`ts-rs`** to generate TypeScript types from the Rust structs. It eliminate
 **Trust boundaries:** WebView ↔ Rust core; Rust core ↔ filesystem; app ↔ network; supply chain.
 **Non-goal:** defending against an attacker already executing code as this user — they do not need Shelv.
 
-The strongest property of this design is architectural and follows from the stated intent: **Shelv holds no credentials.** It reads the *local* OneDrive folder on disk and relies on the OneDrive client for hydration; it never authenticates to Microsoft Graph. No OAuth, no token store, no refresh flow, nothing to steal. This is a binding design constraint — adding any remote destination destroys it and requires this model to be rewritten.
+The strongest property of this design is architectural and follows from the stated intent: **Shelv holds no credentials.** It reads the _local_ OneDrive folder on disk and relies on the OneDrive client for hydration; it never authenticates to Microsoft Graph. No OAuth, no token store, no refresh flow, nothing to steal. This is a binding design constraint — adding any remote destination destroys it and requires this model to be rewritten.
 
-| # | Threat | Mitigation |
-|---|---|---|
-| T1 | Crafted filename rendered in the table achieves script execution in the WebView, which then drives the backup engine | Strict CSP (`default-src 'self'`); no `dangerouslySetInnerHTML`; no `eval`; `withGlobalTauri: false`. Decisively, **the frontend holds no filesystem capability** — commands take rule/destination IDs and Rust resolves paths from the database. A compromised WebView can start a backup the user already configured; it cannot invent a path |
-| T2 | Path traversal or symlink/junction escape copies or overwrites outside the intended tree | Canonicalise both ends; reject any resolved path that is not a descendant of the rule root; use `symlink_metadata` and **do not follow links by default**; depth cap; cycle detection |
-| T3 | Wrong-drive clobber after a letter reassignment | Match on stable volume identity before any write (§1.1a, §2.6). Mismatch ⇒ UNAVAILABLE, never a mount-point fallback |
-| T4 | Destructive mirror deletes user data | Deletions **off by default**, explicit per-rule opt-in; refuse destination inside source and vice versa; refuse bare drive roots, `C:\Windows`, `C:\Program Files`, user profile root; dry run shows the deletion count before the first destructive run; delete to Recycle Bin where available; temp+atomic rename so an interrupted run never truncates a good copy |
-| T5 | Cloud hydration fills the system disk, or releases a file the user wanted kept local | Preflight space check on both volumes; bounded hydrate→copy→release batches; per-rule hydration budget; record pre-existing pin state and **only release files Shelv itself hydrated** (§1.2) |
-| T6 | Hydration reads produce truncated stubs that look like successful backups | Never memory-map a sync root; per-file hydration timeout; verify post-hydration size against the placeholder's logical size before the copy counts as successful; any mismatch or timeout marks the file skipped and the run **Partial** |
-| T7 | Data exfiltration | No telemetry, no analytics, no crash reporting. The only outbound request is the updater to GitHub, and it is disableable |
-| T8 | Malicious update ⇒ code execution | Updater verifies a minisign signature against a public key compiled into the binary; the private key lives only in Actions secrets; releases are built by tagged CI, never a laptop, and drafted for human confirmation |
-| T9 | Supply-chain compromise via a dependency | `cargo deny` and `pnpm audit` in CI; Dependabot on cargo, npm and actions; lockfiles committed; actions pinned by SHA; a deliberately small dependency surface |
-| T10 | Privilege escalation | Runs strictly as the logged-in user. No elevation, no Windows service, no admin installer. This is also *required* for OneDrive hydration to work at all (§1.2). Accepted consequence: unreadable files are not backed up, and are reported as skipped |
-| T11 | Rule database tampering or disclosure | `%LOCALAPPDATA%\Shelv` with default per-user ACLs. Paths and metadata only — no credentials, because none exist. The README states plainly that logs contain file paths |
-| T12 | Locked files (an open Lightroom catalog) copied in a torn state | Open share-read; detect sharing violations; record as skipped and mark the run **Partial**. Never report success on a torn copy |
+| #   | Threat                                                                                                               | Mitigation                                                                                                                                                                                                                                                                                                                                                            |
+| --- | -------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| T1  | Crafted filename rendered in the table achieves script execution in the WebView, which then drives the backup engine | Strict CSP (`default-src 'self'`); no `dangerouslySetInnerHTML`; no `eval`; `withGlobalTauri: false`. Decisively, **the frontend holds no filesystem capability** — commands take rule/destination IDs and Rust resolves paths from the database. A compromised WebView can start a backup the user already configured; it cannot invent a path                       |
+| T2  | Path traversal or symlink/junction escape copies or overwrites outside the intended tree                             | Canonicalise both ends; reject any resolved path that is not a descendant of the rule root; use `symlink_metadata` and **do not follow links by default**; depth cap; cycle detection                                                                                                                                                                                 |
+| T3  | Wrong-drive clobber after a letter reassignment                                                                      | Match on stable volume identity before any write (§1.1a, §2.6). Mismatch ⇒ UNAVAILABLE, never a mount-point fallback                                                                                                                                                                                                                                                  |
+| T4  | Destructive mirror deletes user data                                                                                 | Deletions **off by default**, explicit per-rule opt-in; refuse destination inside source and vice versa; refuse bare drive roots, `C:\Windows`, `C:\Program Files`, user profile root; dry run shows the deletion count before the first destructive run; delete to Recycle Bin where available; temp+atomic rename so an interrupted run never truncates a good copy |
+| T5  | Cloud hydration fills the system disk, or releases a file the user wanted kept local                                 | Preflight space check on both volumes; bounded hydrate→copy→release batches; per-rule hydration budget; record pre-existing pin state and **only release files Shelv itself hydrated** (§1.2)                                                                                                                                                                         |
+| T6  | Hydration reads produce truncated stubs that look like successful backups                                            | Never memory-map a sync root; per-file hydration timeout; verify post-hydration size against the placeholder's logical size before the copy counts as successful; any mismatch or timeout marks the file skipped and the run **Partial**                                                                                                                              |
+| T7  | Data exfiltration                                                                                                    | No telemetry, no analytics, no crash reporting. The only outbound request is the updater to GitHub, and it is disableable                                                                                                                                                                                                                                             |
+| T8  | Malicious update ⇒ code execution                                                                                    | Updater verifies a minisign signature against a public key compiled into the binary; the private key lives only in Actions secrets; releases are built by tagged CI, never a laptop, and drafted for human confirmation                                                                                                                                               |
+| T9  | Supply-chain compromise via a dependency                                                                             | `cargo deny` and `pnpm audit` in CI; Dependabot on cargo, npm and actions; lockfiles committed; actions pinned by SHA; a deliberately small dependency surface                                                                                                                                                                                                        |
+| T10 | Privilege escalation                                                                                                 | Runs strictly as the logged-in user. No elevation, no Windows service, no admin installer. This is also _required_ for OneDrive hydration to work at all (§1.2). Accepted consequence: unreadable files are not backed up, and are reported as skipped                                                                                                                |
+| T11 | Rule database tampering or disclosure                                                                                | `%LOCALAPPDATA%\Shelv` with default per-user ACLs. Paths and metadata only — no credentials, because none exist. The README states plainly that logs contain file paths                                                                                                                                                                                               |
+| T12 | Locked files (an open Lightroom catalog) copied in a torn state                                                      | Open share-read; detect sharing violations; record as skipped and mark the run **Partial**. Never report success on a torn copy                                                                                                                                                                                                                                       |
 
 ### 4.2 Enforcing "local disks and connected drives only"
 
 Two layers, both re-checked immediately before the first write of every run — configuration-time-only validation is bypassable by anything that edits the database:
 
-1. **Drive-type gate.** `GetDriveTypeW` must return `DRIVE_FIXED` or `DRIVE_REMOVABLE`. `DRIVE_REMOTE` (SMB/network shares, mapped letters, UNC paths), `DRIVE_CDROM` and `DRIVE_RAMDISK` are rejected at rule creation *and* at run time, so a rule cannot be repointed at a network share later.
+1. **Drive-type gate.** `GetDriveTypeW` must return `DRIVE_FIXED` or `DRIVE_REMOVABLE`. `DRIVE_REMOTE` (SMB/network shares, mapped letters, UNC paths), `DRIVE_CDROM` and `DRIVE_RAMDISK` are rejected at rule creation _and_ at run time, so a rule cannot be repointed at a network share later.
 2. **Tauri 2 capabilities.** Grant only the permissions actually used (`dialog:allow-open`, `notification:default`, `updater:default`, autostart, single-instance). The `fs` and `shell` plugins are **not** enabled for the frontend at all. Paths enter the system only through the native folder picker — the OS-level consent step — and are then stored as volume-relative references.
 
 ### 4.3 Deliberate v1 exclusions
@@ -378,15 +381,15 @@ The repository is private for now and may become public. Two consequences to res
 
 ## 5. Roadmap
 
-| Phase | Deliverable |
-|---|---|
-| **M0 — Skeleton** | Tauri 2 + React scaffold, SQLite store and migrations, platform abstraction boundary, locked-down capabilities, CI green on Windows and Linux, dark theme shell, rule table rendering stub data |
-| **M1 — Core engine** | Volume enumeration with stable identity; planner (walk, exclude, diff); copier (parallel, temp+rename, long paths); Mirror layout; dry run; run history. Testable without UI |
-| **M2 — Usable app** | Rule CRUD, folder picker, availability column, Backup Now, live progress, colour-coded tags, run results |
-| **M3 — Automation** | Scheduler with catch-up and run-on-connect; tray icon; run at login; notifications; Snapshot layout with retention |
-| **M4 — Cloud + packaging** | OneDrive hydrate / hydrate-and-release with budgets and pin-state restore; Zip with Zip64 and store/deflate; compression-ratio readout; rule import/export |
-| **M5 — Release** | MSI + NSIS via `tauri-action`, signed updater, docs, `v1.0.0` |
-| **v1.1** | BLAKE3 verification mode; hard-linked snapshots; Volume Shadow Copy for locked files; restore UI |
+| Phase                      | Deliverable                                                                                                                                                                                     |
+| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **M0 — Skeleton**          | Tauri 2 + React scaffold, SQLite store and migrations, platform abstraction boundary, locked-down capabilities, CI green on Windows and Linux, dark theme shell, rule table rendering stub data |
+| **M1 — Core engine**       | Volume enumeration with stable identity; planner (walk, exclude, diff); copier (parallel, temp+rename, long paths); Mirror layout; dry run; run history. Testable without UI                    |
+| **M2 — Usable app**        | Rule CRUD, folder picker, availability column, Backup Now, live progress, colour-coded tags, run results                                                                                        |
+| **M3 — Automation**        | Scheduler with catch-up and run-on-connect; tray icon; run at login; notifications; Snapshot layout with retention                                                                              |
+| **M4 — Cloud + packaging** | OneDrive hydrate / hydrate-and-release with budgets and pin-state restore; Zip with Zip64 and store/deflate; compression-ratio readout; rule import/export                                      |
+| **M5 — Release**           | MSI + NSIS via `tauri-action`, signed updater, docs, `v1.0.0`                                                                                                                                   |
+| **v1.1**                   | BLAKE3 verification mode; hard-linked snapshots; Volume Shadow Copy for locked files; restore UI                                                                                                |
 
 ### 5.1 Engine acceptance criteria for v1.0
 

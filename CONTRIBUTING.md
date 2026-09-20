@@ -1,0 +1,59 @@
+# Contributing to Shelv
+
+## Prerequisites
+
+- Rust (stable, 1.82+) and `cargo`
+- Node 22+ and `pnpm`
+- `cargo install cargo-deny --locked`
+- Linux builds additionally need: `libwebkit2gtk-4.1-dev libgtk-3-dev
+  libayatana-appindicator3-dev librsvg2-dev patchelf`
+
+```sh
+pnpm install
+```
+
+## Checks
+
+Every one of these runs in CI and must pass before merge.
+
+| Check | Command |
+|---|---|
+| Rust formatting | `cargo fmt --all --check` |
+| Rust lints | `cargo clippy --workspace --all-targets -- -D warnings` |
+| Rust tests | `cargo test --workspace` |
+| Dependency audit | `cargo deny check` |
+| TypeScript lints | `pnpm lint` |
+| TypeScript formatting | `pnpm format:check` |
+| TypeScript types | `pnpm typecheck` |
+| Frontend build | `pnpm build` |
+
+`pnpm format` rewrites files in place; `cargo fmt --all` does the same for Rust.
+
+## Running the app
+
+```sh
+pnpm tauri dev          # dev server + window
+pnpm tauri build        # release installer (Windows targets)
+```
+
+On a headless Linux machine the window can still be exercised:
+
+```sh
+Xvfb :99 -screen 0 1280x800x24 &
+DISPLAY=:99 ./target/release/shelv
+```
+
+## Lint policy
+
+The workspace denies `unwrap`, `expect`, `panic`, indexing and lossy numeric
+casts (see `[workspace.lints]` in the root `Cargo.toml`). This is deliberate:
+Shelv moves and deletes people's files, and a panic mid-run is a corrupted
+backup. Handle the error, or document in the code why the case is impossible.
+
+`clippy.toml` additionally bans `Path::to_string_lossy` and `std::fs::copy` —
+the first mangles non-UTF-8 paths, the second skips the temp-and-rename
+discipline that keeps an interrupted run from truncating a good backup.
+
+`cargo deny` reports unmaintained crates only for our own direct dependencies,
+since Tauri's transitive tree carries several we cannot act on. Vulnerabilities
+are denied wherever they appear.

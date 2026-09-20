@@ -1,7 +1,7 @@
 //! The IPC surface.
 //!
 //! Commands take rule, destination and tag **ids** — never paths. Paths are
-//! resolved inside `shelv-core` from the database, so a compromised WebView
+//! resolved inside `shelv-core` from the database, so a compromised `WebView`
 //! cannot invent one (`docs/PLAN.md` §4, T1). The real command set lands in
 //! task #7; this is the wiring it plugs into.
 
