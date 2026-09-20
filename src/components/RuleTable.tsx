@@ -10,6 +10,15 @@ import { useMemo, useState } from "react";
 
 import { tagStyle } from "../lib/palette";
 import type { Layout, Packaging, RuleRow, Schedule, TagId } from "../types";
+
+declare module "@tanstack/react-table" {
+  // Lets a cell reach the callbacks without threading them through every
+  // column definition.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  interface TableMeta<TData> {
+    onEdit: ((row: RuleRow) => void) | undefined;
+  }
+}
 import { AvailabilityPill, RunResultPill } from "./StatusPill";
 
 /**
@@ -225,21 +234,30 @@ const columns = [
     size: 155,
     cell: (ctx) => (
       <div className="flex gap-3 text-xs whitespace-nowrap">
+        {/* Always disabled: the engine lands in M1 and nothing copies files
+            yet. A button that looks operational and silently does nothing is
+            worse than no button in a backup tool — it invites someone to
+            believe a backup ran. The reason still distinguishes "not built"
+            from "this rule could not run anyway", because those are
+            different things to know. */}
         <button
           type="button"
-          className="text-accent-blue underline-offset-2 hover:underline disabled:cursor-not-allowed disabled:text-fg-muted disabled:no-underline"
-          disabled={!isRunnable(ctx.row.original)}
+          disabled
+          className="cursor-not-allowed text-fg-muted"
           title={
             isRunnable(ctx.row.original)
-              ? "Run this backup now"
-              : "Cannot run: the source or every destination is unavailable"
+              ? "Running backups is not built yet — it arrives with the backup engine. Nothing is copied at this stage."
+              : "This rule could not run in any case: the source or every destination is unavailable. Running backups is also not built yet."
           }
         >
           Backup Now
         </button>
         <button
           type="button"
-          className="text-fg-muted underline-offset-2 hover:underline"
+          onClick={() => {
+            ctx.table.options.meta?.onEdit?.(ctx.row.original);
+          }}
+          className="text-accent-blue underline-offset-2 hover:underline"
         >
           Edit Rule
         </button>
@@ -265,10 +283,16 @@ function isRunnable(row: RuleRow): boolean {
 export function RuleTable({
   rows,
   tagFilter,
+  onEdit,
+  onCreate,
 }: {
   rows: RuleRow[];
   /** Show only rules carrying every one of these tags. Empty shows all. */
   tagFilter?: TagId[];
+  /** Open the editor for a rule. */
+  onEdit?: (row: RuleRow) => void;
+  /** Start a new rule, offered from the empty state. */
+  onCreate?: () => void;
 }) {
   const [sorting, setSorting] = useState<SortingState>([]);
 
@@ -292,6 +316,7 @@ export function RuleTable({
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
     columnResizeMode: "onChange",
+    meta: { onEdit },
   });
 
   if (rows.length === 0) {
@@ -299,6 +324,19 @@ export function RuleTable({
       <div className="p-8 text-center text-sm text-fg-muted">
         <p>No backup rules yet.</p>
         <p className="mt-1">Create one to choose a folder and where to copy it.</p>
+        {onCreate && (
+          <button
+            type="button"
+            onClick={onCreate}
+            className="mt-4 rounded px-3 py-1"
+            style={{
+              color: "var(--accent-blue)",
+              backgroundColor: "var(--accent-blue-fill)",
+            }}
+          >
+            New rule
+          </button>
+        )}
       </div>
     );
   }
