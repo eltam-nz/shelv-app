@@ -41,10 +41,6 @@ allow = [
 confidence-threshold = 0.9
 unused-allowed-license = "allow"
 
-[licenses.private]
-# Our own crates are unpublished and the project licence is not yet chosen.
-ignore = true
-
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"

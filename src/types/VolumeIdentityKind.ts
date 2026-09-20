@@ -8,4 +8,4 @@
  * to a different disk (`docs/PLAN.md` §1.1a). The value is opaque to the
  * engine and to the database; only the platform layer interprets it.
  */
-export type VolumeIdentityKind = "windows_volume_guid" | "linux_fs_uuid";
+export type VolumeIdentityKind = "windows_volume_guid" | "linux_fs_uuid" | "unverified";

@@ -37,6 +37,30 @@ pub enum VolumeIdentityKind {
     WindowsVolumeGuid,
     /// A Linux filesystem UUID, as published under `/dev/disk/by-uuid`.
     LinuxFsUuid,
+    /// **No stable identity could be determined.** The value is the mount
+    /// point, which is exactly what this type exists to avoid relying on: it
+    /// changes between sessions, so a reconnected drive looks like a new
+    /// volume and a different drive at the same location looks like this one.
+    ///
+    /// Shelv will not write to such a volume. It is still enumerated, so the
+    /// UI can explain why rather than silently omitting it.
+    Unverified,
+}
+
+impl VolumeIdentityKind {
+    /// Whether an identity of this kind survives the volume being
+    /// disconnected and reattached somewhere else.
+    ///
+    /// Everything that decides whether a backup may be written must go
+    /// through this rather than testing for a specific variant, so that a
+    /// future identity scheme is refused until it is explicitly trusted.
+    #[must_use]
+    pub const fn is_stable(self) -> bool {
+        match self {
+            Self::WindowsVolumeGuid | Self::LinuxFsUuid => true,
+            Self::Unverified => false,
+        }
+    }
 }
 
 /// A stable, platform-specific volume identity.
@@ -153,6 +177,15 @@ pub struct VolumeInfo {
 }
 
 impl VolumeInfo {
+    /// Whether this volume may be read from or written to.
+    ///
+    /// Requires both a permitted device type and an identity that will still
+    /// mean the same thing next time the drive appears.
+    #[must_use]
+    pub const fn is_usable(&self) -> bool {
+        self.drive_type.is_permitted() && self.identity.kind.is_stable()
+    }
+
     /// The mtime difference below which two files count as unchanged.
     ///
     /// FAT32 records modification times in two-second units, so an exact
@@ -379,6 +412,36 @@ mod tests {
         assert_eq!(volume("vfat").mtime_tolerance().as_secs(), 2);
         assert_eq!(volume("NTFS").mtime_tolerance().as_secs(), 0);
         assert_eq!(volume("exFAT").mtime_tolerance().as_secs(), 0);
+    }
+
+    #[test]
+    fn an_unverifiable_identity_is_never_stable() {
+        assert!(VolumeIdentityKind::WindowsVolumeGuid.is_stable());
+        assert!(VolumeIdentityKind::LinuxFsUuid.is_stable());
+        assert!(!VolumeIdentityKind::Unverified.is_stable());
+    }
+
+    #[test]
+    fn a_permitted_drive_with_no_stable_identity_is_not_usable() {
+        // The case that would otherwise slip through: the device type is
+        // fine, so every drive-type check passes, but the identity is a
+        // mount point and cannot be verified on reconnection.
+        let volume = |kind| VolumeInfo {
+            identity: VolumeIdentity {
+                kind,
+                value: "/media/backup".into(),
+            },
+            mount_point: PathBuf::from("/media/backup"),
+            serial: None,
+            label: None,
+            filesystem: Some("exFAT".to_owned()),
+            drive_type: DriveType::Removable,
+            case_sensitivity: CaseSensitivity::Insensitive,
+            is_sync_root: false,
+        };
+
+        assert!(volume(VolumeIdentityKind::LinuxFsUuid).is_usable());
+        assert!(!volume(VolumeIdentityKind::Unverified).is_usable());
     }
 
     #[test]

@@ -34,6 +34,10 @@ pub enum Availability {
     /// does not match. Almost always a different disk that inherited the
     /// drive letter (`docs/PLAN.md` §1.1a). Never written to.
     IdentityMismatch,
+    /// Attached, but the system exposes nothing that identifies this volume
+    /// across reconnections. Shelv cannot tell it apart from a different
+    /// drive appearing at the same place, so it will not write to it.
+    Unverifiable,
 }
 
 impl Availability {
@@ -136,7 +140,11 @@ fn classify(volume: StoredVolume, attached: &[crate::platform::VolumeInfo]) -> V
         };
     };
 
-    let availability = if live.drive_type.is_permitted() {
+    // Order matters: an unverifiable identity is reported as such even on a
+    // permitted device type, because "Refused" would suggest the wrong fix.
+    let availability = if !live.identity.kind.is_stable() {
+        Availability::Unverifiable
+    } else if live.drive_type.is_permitted() {
         Availability::Available
     } else {
         Availability::Refused
@@ -306,5 +314,21 @@ mod tests {
         assert!(!Availability::Disconnected.is_writable());
         assert!(!Availability::Refused.is_writable());
         assert!(!Availability::IdentityMismatch.is_writable());
+        assert!(!Availability::Unverifiable.is_writable());
+    }
+
+    #[test]
+    fn an_attached_volume_with_no_stable_identity_is_unverifiable() {
+        // Permitted device type, physically present, and still refused: the
+        // system offers nothing that would identify it next time.
+        let mut live = info("/media/backup", "/media/backup", DriveType::Removable);
+        live.identity.kind = VolumeIdentityKind::Unverified;
+
+        let mut record = stored(1, "/media/backup", Some("/media/backup"));
+        record.identity.kind = VolumeIdentityKind::Unverified;
+
+        let status = classify(record, &[live]);
+        assert_eq!(status.availability, Availability::Unverifiable);
+        assert!(!status.availability.is_writable());
     }
 }

@@ -67,7 +67,7 @@ on identity alone. The mount point is recorded for display and is never used to
 resolve anything. Windows uses a volume GUID path; Linux will use the
 filesystem UUID from `/dev/disk/by-uuid`.
 
-`view::Availability` has four states rather than the two a mock-up would
+`view::Availability` has five states rather than the two a mock-up would
 suggest, because they need different words and different actions:
 
 | State | Meaning |
@@ -76,17 +76,27 @@ suggest, because they need different words and different actions:
 | `Disconnected` | Not attached. Plugging the drive in fixes it. |
 | `Refused` | Attached, but a network share, optical media or unclassifiable. Plugging in does not help. |
 | `IdentityMismatch` | Something *is* mounted where this destination used to be, but it is a different volume. Never written to. |
+| `Unverifiable` | Attached and of a permitted type, but the system reports nothing that identifies it across reconnections. Cannot be told apart from a different drive in the same place, so never written to. |
 
-The last one is the dangerous case. Collapsing it into "unavailable" would read
-as "unplugged" and hide the situation that can destroy data. It is surfaced as
-"Different drive".
+`IdentityMismatch` is the dangerous case. Collapsing it into "unavailable"
+would read as "unplugged" and hide the situation that can destroy data, so it
+is surfaced as "Different drive".
 
-**Known gap:** where no stable identity is available — no `/dev/disk/by-uuid`
-entry on Linux, and currently always on Windows, since GUID enumeration is not
-yet implemented — the platform layer falls back to the mount point, which is
-exactly the unstable value this design exists to avoid. Nothing refuses such a
-volume yet. There is no write path, so nothing is at risk today, but this must
-close before the copier lands in M1.
+`Unverifiable` exists because "we could not identify this drive" must not be
+allowed to degrade into "assume it is the right one". On Windows the identity
+comes from `GetVolumeNameForVolumeMountPointW`; on Linux from
+`/dev/disk/by-uuid`. Where neither yields anything — an empty removable bay, a
+container without `/dev/disk`, a filesystem with no UUID — the volume is
+marked `VolumeIdentityKind::Unverified` and `VolumeInfo::is_usable` returns
+false. Nothing that decides whether a backup may be written tests for a
+specific identity variant; everything goes through
+`VolumeIdentityKind::is_stable`, so a future identity scheme is refused until
+it is explicitly trusted. An unrecognised `identity_kind` read back from the
+database is treated the same way.
+
+Windows enumerates volumes by walking `FindFirstVolumeW`/`FindNextVolumeW` and
+resolving each GUID's mount points, rather than scanning drive letters A–Z.
+That also finds volumes mounted into a folder, which have no letter at all.
 
 ## Concurrency
 

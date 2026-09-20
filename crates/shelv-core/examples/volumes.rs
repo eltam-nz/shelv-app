@@ -11,11 +11,12 @@ fn main() {
         Ok(volumes) => {
             for v in volumes {
                 println!(
-                    "{:<24} {:<12} {:<8} permitted={:<5} identity={}",
+                    "{:<24} {:<10} {:<10} usable={:<5} identity={:?}:{}",
                     v.mount_point.display(),
                     v.filesystem.as_deref().unwrap_or("-"),
                     format!("{:?}", v.drive_type),
-                    v.drive_type.is_permitted(),
+                    v.is_usable(),
+                    v.identity.kind,
                     v.identity.value,
                 );
             }

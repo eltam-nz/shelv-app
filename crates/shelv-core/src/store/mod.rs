@@ -628,13 +628,20 @@ fn serde_plain_kind(kind: VolumeIdentityKind) -> &'static str {
     match kind {
         VolumeIdentityKind::WindowsVolumeGuid => "win_volume_guid",
         VolumeIdentityKind::LinuxFsUuid => "linux_fs_uuid",
+        VolumeIdentityKind::Unverified => "unverified",
     }
 }
 
 fn kind_from_str(s: &str) -> VolumeIdentityKind {
     match s {
+        "win_volume_guid" => VolumeIdentityKind::WindowsVolumeGuid,
         "linux_fs_uuid" => VolumeIdentityKind::LinuxFsUuid,
-        _ => VolumeIdentityKind::WindowsVolumeGuid,
+        // Anything this build does not recognise — a row from a newer
+        // version, or a hand-edited database — is treated as unverifiable
+        // rather than assumed to be a scheme we trust. Reading it as a
+        // trusted kind would let a backup be written against an identity
+        // this build cannot actually check.
+        _ => VolumeIdentityKind::Unverified,
     }
 }
 

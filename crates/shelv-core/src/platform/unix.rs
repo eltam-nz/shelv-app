@@ -186,20 +186,28 @@ impl UnixFs {
             CaseSensitivity::Sensitive
         };
 
-        VolumeInfo {
-            identity: VolumeIdentity {
-                kind: VolumeIdentityKind::LinuxFsUuid,
-                // Without a UUID the mount point is the only handle
-                // available, and it is *not* stable across reconnection —
-                // exactly what identity matching exists to avoid. Nothing
-                // refuses such a volume yet; task #13 must close that before
-                // the copier lands in M1.
-                #[allow(
-                    clippy::disallowed_methods,
-                    reason = "an identity is a display string, never reopened as a path"
-                )]
-                value: uuid.unwrap_or_else(|| mount.mount_point.to_string_lossy().into_owned()),
+        // Without a UUID the mount point is the only handle available, and it
+        // is *not* stable across reconnection — exactly what identity
+        // matching exists to avoid. Mark it unverifiable so
+        // `VolumeInfo::is_usable` refuses it, rather than passing a mount
+        // point off as an identity.
+        #[allow(
+            clippy::disallowed_methods,
+            reason = "an identity is a display string, never reopened as a path"
+        )]
+        let identity = uuid.map_or_else(
+            || VolumeIdentity {
+                kind: VolumeIdentityKind::Unverified,
+                value: mount.mount_point.to_string_lossy().into_owned(),
             },
+            |value| VolumeIdentity {
+                kind: VolumeIdentityKind::LinuxFsUuid,
+                value,
+            },
+        );
+
+        VolumeInfo {
+            identity,
             mount_point: mount.mount_point.clone(),
             serial: None,
             label: None,
@@ -410,6 +418,19 @@ tmpfs /dev/shm tmpfs rw,nosuid 0 0
 
         assert_eq!(by_mount("/dev/shm").drive_type, DriveType::RamDisk);
         assert!(!by_mount("/dev/shm").drive_type.is_permitted());
+    }
+
+    #[test]
+    fn a_mount_with_no_uuid_is_marked_unverifiable() {
+        // /dev/disk/by-uuid is absent in containers and on some systems, so
+        // this is the common case, not an edge case. Passing the mount point
+        // off as an identity would defeat the whole scheme.
+        let fs = UnixFs::with_mounts("/dev/sdz9 /media/nouuid ext4 rw 0 0\n");
+        let v = fs.volumes().unwrap();
+        let first = v.first().expect("one volume");
+        assert_eq!(first.identity.kind, VolumeIdentityKind::Unverified);
+        assert_eq!(first.identity.value, "/media/nouuid");
+        assert!(!first.is_usable(), "an unverifiable volume must be refused");
     }
 
     #[test]

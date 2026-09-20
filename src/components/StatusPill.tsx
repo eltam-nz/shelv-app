@@ -57,6 +57,18 @@ const AVAILABILITY: Record<Availability, Omit<PillProps, "title"> & { title: str
     title:
       "Attached, but Shelv does not back up to this kind of volume — network shares, optical media and unclassifiable drives are excluded.",
   },
+  // Present and permitted, but nothing identifies it across reconnections,
+  // so it cannot be told apart from a different drive appearing in the same
+  // place. Worded to point at the cause rather than sounding like a refusal
+  // the user could argue with.
+  unverifiable: {
+    icon: "?",
+    label: "Unidentified",
+    color: "var(--status-refused)",
+    fill: "var(--status-refused-fill)",
+    title:
+      "This drive is connected, but the system does not report anything that identifies it across reconnections. Shelv will not write to it, because it cannot tell it apart from a different drive plugged into the same place.",
+  },
   // The dangerous one. Worded so it is obvious this is not just "unplugged":
   // something IS mounted there, and writing to it would be a mistake.
   identity_mismatch: {

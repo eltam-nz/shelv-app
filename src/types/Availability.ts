@@ -7,4 +7,4 @@
  * drive that is unplugged and a drive that is plugged in but *refused* need
  * different words, because only one of them is fixed by plugging it in.
  */
-export type Availability = "available" | "disconnected" | "refused" | "identity_mismatch";
+export type Availability = "available" | "disconnected" | "refused" | "identity_mismatch" | "unverifiable";

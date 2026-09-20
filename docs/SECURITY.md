@@ -36,7 +36,7 @@ user. They do not need Shelv.
 |---|---|---|---|
 | T1 | A crafted filename rendered in the rule table achieves script execution, which then drives the backup engine | Strict CSP; no `dangerouslySetInnerHTML`; no `eval`; `withGlobalTauri: false`; `freezePrototype`. Decisively, **the frontend holds no filesystem capability** — commands take ids and Rust resolves paths from the database | Implemented, tested |
 | T2 | Path traversal or a symlink escaping the source tree | Canonicalise both ends; reject any resolved path that is not a descendant of the rule root; `symlink_metadata` and do not follow links by default; depth cap; cycle detection | M1 |
-| T3 | Writing a backup to the wrong disk after a drive letter is reassigned | Match on stable volume identity before any write; a mismatch is surfaced as "Different drive" and is never writable | Partial — see the gap below |
+| T3 | Writing a backup to the wrong disk after a drive letter is reassigned | Match on stable volume identity before any write; a mismatch is surfaced as "Different drive". Where no stable identity exists at all, the volume is marked unverifiable and is equally unwritable, so "could not identify" never degrades into "assume it is the right one" | Implemented, tested |
 | T4 | A mirror rule deletes the user's data | Deletions off by default and opt-in per rule; refuse destination inside source and the reverse; refuse drive roots and system directories; dry run shows the deletion count first; delete to the recycle bin; temp file plus atomic rename so an interrupted run never truncates a good copy | M1 |
 | T5 | Cloud hydration fills the system disk, or releases a file the user wanted kept locally | Preflight space check on both volumes; bounded hydrate-copy-release batches; per-rule budget; record each file's prior pin state and release only files Shelv itself hydrated | M4 |
 | T6 | Hydration produces truncated stubs that look like successful backups | Never memory-map a sync root; per-file hydration timeout; verify size against the placeholder's logical size before counting the copy as successful | M4 |
@@ -90,16 +90,22 @@ correctness of the shipping manifest; the manifest tests carry that half.
 starts loading real capabilities into the mock, at which point the runtime
 tests can be strengthened.
 
-## Known gap
+## Volume identity
 
-Where no stable volume identity is available — no `/dev/disk/by-uuid` entry on
-Linux, and currently always on Windows because GUID enumeration is not yet
-implemented — the platform layer falls back to the mount point. That is exactly
-the unstable value identity matching exists to replace, and nothing refuses
-such a volume yet.
+Getting this wrong loses data rather than merely annoying someone, so it is
+worth stating how the refusal works.
 
-No write path exists, so nothing is at risk today. This must close before the
-copier lands in M1 (T3 above).
+A volume is trusted only if it carries an identity that survives being
+unplugged and reattached: a volume GUID path on Windows, a filesystem UUID on
+Linux. Where the system offers neither, the volume is recorded as
+`VolumeIdentityKind::Unverified` and refused — it cannot be told apart from a
+different drive appearing in the same place.
+
+Nothing tests for a specific identity variant. Every decision goes through
+`VolumeIdentityKind::is_stable`, so a scheme added later is refused until
+someone explicitly marks it trustworthy, and an `identity_kind` read back from
+the database that this build does not recognise is treated as unverifiable
+rather than assumed to be one we trust.
 
 ## Deliberate exclusions
 

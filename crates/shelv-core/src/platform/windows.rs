@@ -12,10 +12,12 @@ use std::path::{Path, PathBuf};
 
 use windows::core::PCWSTR;
 use windows::Win32::Storage::FileSystem::{
-    GetDiskFreeSpaceExW, GetDriveTypeW, GetFileAttributesW, GetVolumeInformationW,
-    GetVolumePathNameW, SetFileAttributesW, FILE_ATTRIBUTE_OFFLINE, FILE_ATTRIBUTE_PINNED,
-    FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS, FILE_ATTRIBUTE_RECALL_ON_OPEN, FILE_ATTRIBUTE_UNPINNED,
-    FILE_FLAGS_AND_ATTRIBUTES, INVALID_FILE_ATTRIBUTES,
+    FindFirstVolumeW, FindNextVolumeW, FindVolumeClose, GetDiskFreeSpaceExW, GetDriveTypeW,
+    GetFileAttributesW, GetVolumeInformationW, GetVolumeNameForVolumeMountPointW,
+    GetVolumePathNameW, GetVolumePathNamesForVolumeNameW, SetFileAttributesW,
+    FILE_ATTRIBUTE_OFFLINE, FILE_ATTRIBUTE_PINNED, FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS,
+    FILE_ATTRIBUTE_RECALL_ON_OPEN, FILE_ATTRIBUTE_UNPINNED, FILE_FLAGS_AND_ATTRIBUTES,
+    INVALID_FILE_ATTRIBUTES,
 };
 use windows::Win32::System::WindowsProgramming::{
     DRIVE_CDROM, DRIVE_FIXED, DRIVE_RAMDISK, DRIVE_REMOTE, DRIVE_REMOVABLE,
@@ -42,6 +44,9 @@ fn from_wide(buf: &[u16]) -> OsString {
     // Indexing is bounded by `position`, which cannot exceed `buf.len()`.
     OsString::from_wide(buf.get(..end).unwrap_or(&[]))
 }
+
+/// The longest a volume GUID path can be, plus room for a NUL.
+const VOLUME_NAME_LEN: usize = 64;
 
 /// Whether an `OsStr` begins with an ASCII prefix, compared in UTF-16 so that
 /// no lossy conversion is needed.
@@ -147,22 +152,50 @@ impl WindowsFs {
         }
     }
 
+    /// The volume GUID path for a mount root, e.g. `\\?\Volume{...}\`.
+    ///
+    /// This is the identity everything else hangs off: it survives the drive
+    /// being unplugged and reattached under a different letter, which a
+    /// letter itself does not (`docs/PLAN.md` §1.1a).
+    fn volume_guid(root: &Path) -> Option<String> {
+        let input = wide(root.as_os_str());
+        let mut buf = [0u16; VOLUME_NAME_LEN];
+        // SAFETY: `input` is NUL-terminated and outlives the call; `buf` is a
+        // writable slice whose length is passed as the capacity.
+        let ok =
+            unsafe { GetVolumeNameForVolumeMountPointW(PCWSTR(input.as_ptr()), &mut buf).is_ok() };
+        if !ok {
+            // An empty removable bay, or a root that is not a mount point.
+            return None;
+        }
+        let name = from_wide(&buf);
+        // A GUID path is ASCII by construction.
+        #[allow(clippy::disallowed_methods)]
+        let text = Path::new(&name).to_string_lossy().into_owned();
+        (!text.is_empty()).then_some(text)
+    }
+
     /// Builds a [`VolumeInfo`] for a mount root.
     fn describe(root: &Path) -> VolumeInfo {
         let (label, filesystem, serial) = Self::volume_information(root);
-        VolumeInfo {
-            identity: VolumeIdentity {
-                kind: VolumeIdentityKind::WindowsVolumeGuid,
-                // Enumerating true volume GUID paths needs
-                // FindFirstVolume/GetVolumePathNamesForVolumeName, which lands
-                // with volume tracking in M1. Until then the mount root stands
-                // in — which is a drive letter, the unstable value this field
-                // exists to replace. Nothing refuses it yet; task #13 must
-                // close that before the copier lands. A mount root is ASCII or
-                // a GUID path, so the lossy conversion cannot alter it.
+        let identity = Self::volume_guid(root).map_or_else(
+            || VolumeIdentity {
+                // No GUID means nothing stable to key on. Recording the mount
+                // point as if it were an identity is what would let a backup
+                // land on the wrong disk, so it is marked unverifiable and
+                // `VolumeInfo::is_usable` refuses it.
+                kind: VolumeIdentityKind::Unverified,
                 #[allow(clippy::disallowed_methods)]
                 value: root.to_string_lossy().into_owned(),
             },
+            |guid| VolumeIdentity {
+                kind: VolumeIdentityKind::WindowsVolumeGuid,
+                value: guid,
+            },
+        );
+
+        VolumeInfo {
+            identity,
             mount_point: root.to_path_buf(),
             serial,
             label,
@@ -174,20 +207,101 @@ impl WindowsFs {
             is_sync_root: false,
         }
     }
+
+    /// Every volume GUID path the system knows about, mounted or not.
+    fn enumerate_volume_guids() -> Result<Vec<String>> {
+        let mut buf = [0u16; VOLUME_NAME_LEN];
+        // SAFETY: `buf` is a writable slice whose length is passed as the
+        // capacity. The returned handle is closed on every path out below.
+        let handle = unsafe { FindFirstVolumeW(&mut buf) }
+            .map_err(|e| CoreError::Io(format!("could not enumerate volumes: {e}")))?;
+
+        let mut out = Vec::new();
+        loop {
+            #[allow(clippy::disallowed_methods)]
+            let name = Path::new(&from_wide(&buf)).to_string_lossy().into_owned();
+            if !name.is_empty() {
+                out.push(name);
+            }
+            // SAFETY: `handle` came from FindFirstVolumeW and has not been
+            // closed; `buf` is writable and its length is passed along.
+            if unsafe { FindNextVolumeW(handle, &mut buf) }.is_err() {
+                // ERROR_NO_MORE_FILES is the normal end of the walk.
+                break;
+            }
+        }
+
+        // SAFETY: `handle` is still open and is not used again afterwards.
+        let _ = unsafe { FindVolumeClose(handle) };
+        Ok(out)
+    }
+
+    /// The paths a volume is mounted at. Empty for an unmounted volume.
+    fn mount_points_for(guid: &str) -> Vec<PathBuf> {
+        let input = wide(OsStr::new(guid));
+        let mut needed: u32 = 0;
+
+        // Ask for the required size first: a volume can be mounted at several
+        // paths, and a fixed buffer would silently truncate the list.
+        // SAFETY: `input` is NUL-terminated and outlives the call; passing no
+        // buffer is how the API reports the size it needs.
+        let _ = unsafe {
+            GetVolumePathNamesForVolumeNameW(PCWSTR(input.as_ptr()), None, &raw mut needed)
+        };
+        if needed == 0 {
+            return Vec::new();
+        }
+
+        let mut buf = vec![0u16; needed as usize];
+        // SAFETY: `buf` is sized to what the call above asked for, and
+        // `input` still outlives this call.
+        let ok = unsafe {
+            GetVolumePathNamesForVolumeNameW(
+                PCWSTR(input.as_ptr()),
+                Some(&mut buf),
+                &raw mut needed,
+            )
+        }
+        .is_ok();
+        if !ok {
+            return Vec::new();
+        }
+
+        // The result is a sequence of NUL-terminated strings ending in a
+        // second NUL.
+        buf.split(|c| *c == 0)
+            .filter(|part| !part.is_empty())
+            .map(|part| PathBuf::from(OsString::from_wide(part)))
+            .collect()
+    }
 }
 
 impl PlatformFs for WindowsFs {
     fn volumes(&self) -> Result<Vec<VolumeInfo>> {
-        // Drive letters are a display convenience, never an identity; see
-        // `VolumeIdentityKind`. Full volume enumeration arrives in M1.
+        // Walks real volumes rather than drive letters A–Z. A letter is a
+        // display convenience that the system reassigns; the GUID is not.
+        // This also finds volumes mounted into a folder, which have no letter
+        // at all and which a letter scan would miss entirely.
         let mut out = Vec::new();
-        for letter in b'A'..=b'Z' {
-            let root = PathBuf::from(format!("{}:\\", char::from(letter)));
-            let drive_type = Self::drive_type(&root);
-            if drive_type == DriveType::Unknown {
-                continue;
+        for guid in Self::enumerate_volume_guids()? {
+            for mount in Self::mount_points_for(&guid) {
+                let (label, filesystem, serial) = Self::volume_information(&mount);
+                out.push(VolumeInfo {
+                    identity: VolumeIdentity {
+                        kind: VolumeIdentityKind::WindowsVolumeGuid,
+                        value: guid.clone(),
+                    },
+                    drive_type: Self::drive_type(&mount),
+                    mount_point: mount,
+                    serial,
+                    label,
+                    filesystem,
+                    case_sensitivity: CaseSensitivity::Insensitive,
+                    is_sync_root: false,
+                });
             }
-            out.push(Self::describe(&root));
+            // A volume with no mount point cannot be backed up to, so it is
+            // not reported: there is no path for a rule to name.
         }
         Ok(out)
     }

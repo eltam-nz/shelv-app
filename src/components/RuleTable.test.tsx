@@ -65,6 +65,29 @@ describe("RuleTable", () => {
     expect(screen.getAllByText("Disconnected").length).toBeGreaterThan(0);
   });
 
+  it("distinguishes an unidentifiable drive from a refused one", () => {
+    // Connected and of a permitted type, but the system reports nothing that
+    // identifies it across reconnections, so it cannot be told apart from a
+    // different drive in the same place. "Refused" would point at the wrong
+    // cause and "Available" would be unsafe.
+    const rows = sampleRows();
+    const target = rows[0];
+    expect(target).toBeDefined();
+    const destination = target?.destinations[0];
+    expect(destination).toBeDefined();
+    if (destination) destination.status.availability = "unverifiable";
+
+    render(<RuleTable rows={rows} />);
+
+    const pill = screen.getByText("Unidentified");
+    expect(pill).toBeInTheDocument();
+    expect(pill.closest("span")).toHaveAttribute(
+      "title",
+      expect.stringContaining("does not report anything that identifies it"),
+    );
+    expect(screen.getByRole("row", { name: /Lightroom Catalog/ })).toBeInTheDocument();
+  });
+
   it("marks an attached but refused destination as refused, not available", () => {
     render(<RuleTable rows={sampleRows()} />);
     expect(screen.getByText("Refused")).toBeInTheDocument();
