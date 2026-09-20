@@ -6,6 +6,7 @@
 //! task #7; this is the wiring it plugs into.
 
 use tauri::ipc::Invoke;
+use tauri::Runtime;
 
 /// Reports the running version. Exists so the IPC path is exercised end to end
 /// from the first commit rather than first being tested in M2.
@@ -15,6 +16,9 @@ fn app_version() -> &'static str {
 }
 
 /// The generated invoke handler for every command in this module.
-pub fn handlers() -> impl Fn(Invoke) -> bool + Send + Sync + 'static {
+///
+/// Generic over the runtime so the security tests can drive the *same*
+/// handler the app registers, rather than a rebuilt approximation of it.
+pub fn handlers<R: Runtime>() -> impl Fn(Invoke<R>) -> bool + Send + Sync + 'static {
     tauri::generate_handler![app_version]
 }

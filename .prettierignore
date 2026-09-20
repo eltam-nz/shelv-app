@@ -1,4 +1,10 @@
 dist/
 target/
 pnpm-lock.yaml
+
+# Generated from Rust by scripts/gen-types.sh.
 src/types/
+
+# Prose. Prettier reflows Markdown tables and paragraph wrapping, which churns
+# the hand-laid-out tables in docs/PLAN.md for no benefit.
+*.md

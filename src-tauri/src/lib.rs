@@ -6,6 +6,9 @@
 
 mod commands;
 
+#[cfg(test)]
+mod security_tests;
+
 /// Fatal startup failures.
 #[derive(Debug, thiserror::Error)]
 pub enum StartupError {

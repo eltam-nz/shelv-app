@@ -369,6 +369,12 @@ Two layers, both re-checked immediately before the first write of every run — 
 1. **Drive-type gate.** `GetDriveTypeW` must return `DRIVE_FIXED` or `DRIVE_REMOVABLE`. `DRIVE_REMOTE` (SMB/network shares, mapped letters, UNC paths), `DRIVE_CDROM` and `DRIVE_RAMDISK` are rejected at rule creation _and_ at run time, so a rule cannot be repointed at a network share later.
 2. **Tauri 2 capabilities.** Grant only the permissions actually used (`dialog:allow-open`, `notification:default`, `updater:default`, autostart, single-instance). The `fs` and `shell` plugins are **not** enabled for the frontend at all. Paths enter the system only through the native folder picker — the OS-level consent step — and are then stored as volume-relative references.
 
+   Three layers enforce this, verified in `src-tauri/src/security_tests.rs` by planting each regression and confirming it is caught:
+
+   - **Build time.** Tauri's build script refuses to compile a capability naming a permission whose plugin is not a dependency. Adding `fs:allow-read-text-file` fails the build.
+   - **Run time.** The ACL denies any command no capability grants. The tests register `tauri-plugin-fs` *deliberately* and show its commands are still refused — registration alone grants nothing. (Note `tauri-plugin-fs` is already in the dependency graph via `tauri-plugin-dialog`, so its absence from `Cargo.toml` was never the guarantee.)
+   - **Review.** An explicit `EXPECTED_PERMISSIONS` list fails the build on any granted permission not on it, catching the case the first two miss: one that is valid and would compile, such as `dialog:allow-save`.
+
 ### 4.3 Deliberate v1 exclusions
 
 Archive encryption is out. Legacy ZipCrypto is cryptographically broken and must never be offered; AES-256 zip or `age` would be sound but bring key management and an unrecoverable-data failure mode a v1 does not need. For a destination drive that needs protection, BitLocker To Go is the correct answer and ships with Windows — document that rather than reimplement it.

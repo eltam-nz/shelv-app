@@ -28,6 +28,14 @@ tracing = { workspace = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 ts-rs = { workspace = true }
 
+[dev-dependencies]
+# `test` provides the mock runtime the security tests drive real IPC through.
+tauri = { version = "2", features = ["test"] }
+# Registered by the security tests on purpose, to show that registering the
+# filesystem plugin is still not enough to make its commands reachable. Already
+# in the graph via tauri-plugin-dialog, so this adds no new dependency.
+tauri-plugin-fs = "2"
+
 # The updater, autostart and single-instance plugins are desktop-only and are
 # added in M3/M5 when the features that need them land. Keeping them out until
 # then keeps the capability surface in `capabilities/` honest.
