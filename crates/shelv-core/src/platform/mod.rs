@@ -173,8 +173,10 @@ impl VolumeInfo {
 #[ts(export, export_to = "../../../src/types/")]
 pub struct SpaceInfo {
     /// Bytes currently available to this user.
+    #[ts(type = "number")]
     pub available: u64,
     /// Total capacity.
+    #[ts(type = "number")]
     pub total: u64,
 }
 

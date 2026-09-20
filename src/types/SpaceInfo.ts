@@ -7,8 +7,8 @@ export type SpaceInfo = {
 /**
  * Bytes currently available to this user.
  */
-available: bigint, 
+available: number, 
 /**
  * Total capacity.
  */
-total: bigint, };
+total: number, };

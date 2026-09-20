@@ -7,6 +7,8 @@
 - `cargo install cargo-deny --locked`
 - Linux builds additionally need: `libwebkit2gtk-4.1-dev libgtk-3-dev
   libayatana-appindicator3-dev librsvg2-dev patchelf`
+- To cross-check the Windows code from Linux: `gcc-mingw-w64-x86-64` and
+  `rustup target add x86_64-pc-windows-gnu`
 
 ```sh
 pnpm install
@@ -26,6 +28,8 @@ Every one of these runs in CI and must pass before merge.
 | TypeScript formatting | `pnpm format:check` |
 | TypeScript types | `pnpm typecheck` |
 | Frontend build | `pnpm build` |
+| Platform boundary | `./scripts/check-platform-boundary.sh` |
+| Windows cross-check | `cargo clippy -p shelv-core --target x86_64-pc-windows-gnu --all-targets -- -D warnings` |
 
 `pnpm format` rewrites files in place; `cargo fmt --all` does the same for Rust.
 
@@ -57,3 +61,24 @@ discipline that keeps an interrupted run from truncating a good backup.
 `cargo deny` reports unmaintained crates only for our own direct dependencies,
 since Tauri's transitive tree carries several we cannot act on. Vulnerabilities
 are denied wherever they appear.
+
+## Cross-checking Windows from Linux
+
+`src-tauri` and the Win32 layer in `shelv-core` only compile for Windows, and
+most day-to-day development here happens on Linux. Typecheck them without a
+Windows machine:
+
+```sh
+cargo clippy -p shelv-core --target x86_64-pc-windows-gnu --all-targets -- -D warnings
+```
+
+This is worth the setup. It caught a bug that would otherwise have shipped: the
+Win32 `DRIVE_*` values are bare `u32` constants, not a newtype, so writing them
+as `match` arms made each one an irrefutable binding that matched every value —
+every drive, network shares included, would have classified as `Fixed` and the
+drive-type gate would have passed everything it exists to block.
+
+CI builds the real `x86_64-pc-windows-msvc` target on `windows-latest`; the GNU
+triple is a local convenience, not a release target. It is used rather than
+MSVC here because `rusqlite`'s bundled SQLite needs a C compiler, and mingw
+cross-compiles where the MSVC toolchain is unavailable.

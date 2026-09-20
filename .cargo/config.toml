@@ -1,0 +1,12 @@
+# Cross-checking the Windows code from a Linux dev machine or container.
+#
+# `cargo clippy --target x86_64-pc-windows-gnu -p shelv-core` typechecks the
+# Win32 layer without a Windows machine. This already caught a real bug: the
+# DRIVE_* constants are bare u32s, so `match` arms bound them as variables and
+# classified every drive as Fixed. CI still builds the real MSVC target.
+[target.x86_64-pc-windows-gnu]
+linker = "x86_64-w64-mingw32-gcc"
+
+[env]
+# So the cross-check above works without the caller exporting it.
+CC_x86_64_pc_windows_gnu = "x86_64-w64-mingw32-gcc"
