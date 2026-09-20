@@ -9,10 +9,13 @@ publish.workspace = true
 repository.workspace = true
 
 [lib]
-# Required for the mobile-capable Tauri 2 entrypoint layout; also lets
-# integration tests link against the shell.
+# A plain rlib. Tauri's template adds staticlib and cdylib for mobile, which
+# is out of scope (docs/PLAN.md §1.4), and the cdylib makes `cargo test` fail
+# on Windows with STATUS_ENTRYPOINT_NOT_FOUND: the harness for the lib target
+# tries to load the DLL and cannot resolve its entrypoint. Restore them only
+# alongside an actual mobile target.
 name = "shelv_lib"
-crate-type = ["staticlib", "cdylib", "rlib"]
+crate-type = ["lib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
