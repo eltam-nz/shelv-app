@@ -4,8 +4,15 @@ A local backup manager for Windows: define rules that copy folders from your
 computer to internal disks, external drives and your local OneDrive folder, on
 a schedule or when a drive is plugged in.
 
-**Status: planning complete, implementation starting.** The design is in
-[`docs/PLAN.md`](docs/PLAN.md).
+**Status: early development.** Milestone M0 — the skeleton — is complete: the
+workspace, storage, platform abstraction, IPC surface, theme and rule table are
+in place, with CI on Windows and Linux. The backup engine itself lands in M1,
+so nothing is copied yet.
+
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — how it is built
+- [`docs/SECURITY.md`](docs/SECURITY.md) — threat model and what is enforced
+- [`docs/PLAN.md`](docs/PLAN.md) — the original proposal and its reasoning
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) — how to build it and what CI checks
 
 ## Scope
 
@@ -41,4 +48,4 @@ sits behind an abstraction and CI builds on Linux from the start.
 No telemetry, no analytics, no crash reporting. The only network request Shelv
 makes is an update check against GitHub, and it can be turned off.
 
-See [`docs/PLAN.md`](docs/PLAN.md) §4 for the full threat model.
+See [`docs/SECURITY.md`](docs/SECURITY.md) for the full threat model.

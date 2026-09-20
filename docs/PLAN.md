@@ -2,6 +2,11 @@
 
 > Status: approved for implementation. Revision 2.
 > Scope: feature review (§1), architecture (§2), repo/build/install (§3), security (§4), roadmap (§5).
+>
+> **This document is the original proposal and records why the feature set is
+> what it is. It is not updated as the code evolves.** For how the code is
+> actually put together, read [ARCHITECTURE.md](ARCHITECTURE.md); for the
+> current state of the threat model, read [SECURITY.md](SECURITY.md).
 
 ## Decisions taken
 
