@@ -22,7 +22,7 @@ Every one of these runs in CI and must pass before merge.
 |---|---|
 | Rust formatting | `cargo fmt --all --check` |
 | Rust lints | `cargo clippy --workspace --all-targets -- -D warnings` |
-| Rust tests | `cargo test --workspace` |
+| Rust tests | `cargo test --workspace` (see the Windows note below) |
 | Dependency audit | `cargo deny check` |
 | TypeScript lints | `pnpm lint` |
 | TypeScript formatting | `pnpm format:check` |
@@ -159,3 +159,21 @@ It is private today and may not be later (`docs/PLAN.md` §4.4). So:
 
 Shelv has no credentials of its own to leak — it never authenticates to
 anything — but the repository still must not acquire any.
+
+## Running tests on Windows
+
+`cargo test --workspace` fails on Windows in the `shelv` crate with
+`STATUS_ENTRYPOINT_NOT_FOUND`, before any test runs. This is not a bug in the
+tests.
+
+Anything linking Tauri has `WebView2Loader.dll` as a load-time import. Tauri's
+build script copies that DLL next to the main binary in `target\debug\`, but
+test binaries are built into `target\debug\deps\`. The test binary resolves
+a different loader from `PATH` instead, whose exports do not match, and the
+process dies during DLL initialisation.
+
+On Windows, run `cargo test -p shelv-core`, which is what CI does. Nothing is
+lost: every platform-specific line lives in `shelv-core`, and the shell crate's
+tests exercise Tauri's ACL and parse JSON config, neither of which varies by
+platform. They run on Linux, and `cargo clippy --all-targets` still compiles
+them on both, so a broken test fails the build either way.
