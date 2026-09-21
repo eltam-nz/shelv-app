@@ -122,7 +122,45 @@ jobs:
         if: runner.os == 'Windows'
         run: cargo test -p shelv-core
 
-      - run: cargo build --workspace --release
+      # Linux is not a release target for v1, so this exists only to prove
+      # the whole workspace still links.
+      - name: Build (link check)
+        if: runner.os == 'Linux'
+        run: cargo build --workspace --release
+
+      # The shipped binary must be built through the Tauri CLI, never with a
+      # bare `cargo build`. The CLI is what enables tauri's `custom-protocol`
+      # feature; without it tauri's build script treats the build as a dev
+      # build, embeds no frontend, and points the webview at `devUrl`. Such a
+      # binary compiles and runs, then shows "localhost refused to connect"
+      # on any machine without a dev server — which is every machine that
+      # downloads an artifact.
+      - name: Build the Windows application
+        if: runner.os == 'Windows'
+        run: pnpm tauri build --no-bundle
+
+      # Nothing above fails when the frontend is missing, so assert it is
+      # actually in there rather than trusting the command line.
+      - name: Verify the frontend is embedded
+        if: runner.os == 'Windows'
+        run: node scripts/check-embedded-frontend.mjs target/release/shelv.exe
+
+      # Makes the app testable without a Rust and Node toolchain, which is
+      # otherwise the only way to get a runnable binary before M5 brings
+      # installers. A portable exe rather than an installer: nothing to
+      # install or uninstall, and the frontend is embedded in it, so it is
+      # the whole app in one file.
+      #
+      # Unsigned, so Windows SmartScreen will warn on first run. That is
+      # expected until the signing decision in docs/PLAN.md §3.4 is revisited.
+      - name: Upload the Windows build
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: shelv-windows-x64-${{ github.sha }}
+          path: target/release/shelv.exe
+          if-no-files-found: error
+          retention-days: 14
 
       # Rust is the source of truth for the IPC types. Run it on one platform
       # only: the generated output does not vary by OS, and the check writes

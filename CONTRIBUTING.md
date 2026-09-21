@@ -56,9 +56,17 @@ Do not hand-edit anything under `src/types/` — the generator overwrites it.
 ## Running the app
 
 ```sh
-pnpm tauri dev          # dev server + window
-pnpm tauri build        # release installer (Windows targets)
+pnpm tauri dev              # dev server + window
+pnpm tauri build            # release installer (Windows targets)
+pnpm tauri build --no-bundle  # just the binary, no installer
 ```
+
+Always build through the Tauri CLI. A bare `cargo build --release` produces a
+binary that links and runs but embeds no frontend: the CLI is what turns on
+tauri's `custom-protocol` feature, and without it tauri's build script treats
+the build as a dev build and points the webview at `devUrl`. The window then
+reads "localhost refused to connect" on any machine without a dev server.
+`scripts/check-embedded-frontend.mjs` asserts against this in CI.
 
 On a headless Linux machine the window can still be exercised:
 
