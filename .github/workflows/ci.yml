@@ -145,14 +145,41 @@ jobs:
         if: runner.os == 'Windows'
         run: node scripts/check-embedded-frontend.mjs target/release/shelv.exe
 
+      # The hash of the binary itself, not of the zip the artifact upload
+      # wraps it in. Antivirus engines, SmartScreen and VirusTotal all act on
+      # the exe, so the zip's digest -- which is all the upload step reports
+      # -- cannot be used to check the file that actually gets run. Printing
+      # it here is what lets someone confirm the exe they downloaded is the
+      # one this workflow built from this commit, before deciding whether to
+      # trust an antivirus verdict about it.
+      - name: Report the binary's SHA-256
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $hash = (Get-FileHash target/release/shelv.exe -Algorithm SHA256).Hash.ToLower()
+          $size = (Get-Item target/release/shelv.exe).Length
+          Write-Host "shelv.exe SHA-256: $hash"
+          Write-Host "shelv.exe bytes:   $size"
+          "### Windows build`n`n" +
+            "| | |`n|---|---|`n" +
+            "| File | ``shelv.exe`` |`n" +
+            "| SHA-256 | ``$hash`` |`n" +
+            "| Size | $size bytes |`n" +
+            "| Commit | ``${{ github.sha }}`` |`n`n" +
+            "Unsigned. Verify with ``Get-FileHash shelv.exe -Algorithm SHA256`` " +
+            "after unzipping." >> $env:GITHUB_STEP_SUMMARY
+
       # Makes the app testable without a Rust and Node toolchain, which is
       # otherwise the only way to get a runnable binary before M5 brings
       # installers. A portable exe rather than an installer: nothing to
       # install or uninstall, and the frontend is embedded in it, so it is
       # the whole app in one file.
       #
-      # Unsigned, so Windows SmartScreen will warn on first run. That is
-      # expected until the signing decision in docs/PLAN.md §3.4 is revisited.
+      # Unsigned, so Windows SmartScreen will warn on first run, and Defender
+      # may block it outright: a brand-new unsigned binary has no reputation,
+      # and this one enumerates volumes and copies files in bulk, which is
+      # what the machine-learning detections are shaped to notice. See
+      # docs/SECURITY.md "Antivirus false positives".
       - name: Upload the Windows build
         if: runner.os == 'Windows'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

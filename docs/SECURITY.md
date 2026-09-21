@@ -108,6 +108,61 @@ someone explicitly marks it trustworthy, and an `identity_kind` read back from
 the database that this build does not recognise is treated as unverifiable
 rather than assumed to be one we trust.
 
+## Antivirus false positives
+
+Windows Defender may refuse to download or run a Shelv build, reporting that
+it "contains a virus or unwanted software". Expect this, and do not read it
+as a verdict on the code — but do not take anyone's word that it is a false
+positive either, including this document's. Check.
+
+Three properties of every build push straight into what the heuristics are
+shaped to catch:
+
+* **It is unsigned.** There is no publisher to attribute it to, so nothing
+  offsets the rest. See §3.4 of `docs/PLAN.md`.
+* **It has no reputation.** Each CI run produces a binary whose hash the
+  world has never seen, downloaded by approximately one person. SmartScreen
+  reputation is earned by volume, which a private tool will never have.
+* **It behaves like the thing they hunt for.** Shelv enumerates every
+  attached volume once a second and, once the engine lands, walks user
+  documents and writes them somewhere else in bulk. Described that way it is
+  a backup tool. Described that way it is also ransomware, and a
+  machine-learning classifier is working from the description.
+
+So the detection is doing roughly what it should. The answer is provenance,
+not indignation.
+
+### Checking a build yourself
+
+1. The Windows CI job prints `shelv.exe SHA-256:` and repeats it in the run
+   summary. Compare it against the file you unzipped:
+   `Get-FileHash shelv.exe -Algorithm SHA256`. A match means the binary is
+   the one that workflow built from that commit, and nothing altered it in
+   between. A mismatch means stop.
+2. Upload it to VirusTotal. One or two `!ml` or `Unsafe` hits out of seventy
+   engines is the signature of a heuristic false positive; a broad consensus
+   naming a specific family is not, and should be treated as real.
+3. The source is the repository, the dependencies are pinned by committed
+   lockfiles, and `cargo-deny` checks advisories, licences and sources on
+   every run. None of that proves a binary is clean, but it is what there is
+   to inspect.
+
+### Making it stop
+
+* **Report the false positive to Microsoft** at
+  <https://www.microsoft.com/en-us/wdsi/filesubmission>, as a software
+  developer submitting for analysis. Free, usually answered within a few
+  days, and it clears the detection for everyone rather than one machine.
+* **Sign the binary.** The actual fix, and the reason §3.4 exists. An
+  organisation-validation certificate attributes builds to a publisher; an
+  extended-validation certificate additionally grants SmartScreen reputation
+  immediately rather than accruing it.
+* **An exclusion on your own machine** is defensible for a tool you built
+  yourself, from a repository you control, whose hash you have checked
+  against CI. It is not defensible as a reflex, and it is the narrowest of
+  the three: it helps exactly one computer, and it stays in place long after
+  the reason for it is forgotten.
+
 ## Deliberate exclusions
 
 **Archive encryption.** Legacy ZipCrypto is cryptographically broken and will
