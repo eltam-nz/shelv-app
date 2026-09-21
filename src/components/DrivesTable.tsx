@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 
-import { volumeName } from "../lib/volumes";
+import { identityLabel, volumeName } from "../lib/volumes";
 import type { DriveRow, VolumeId } from "../types";
 import { AvailabilityPill } from "./StatusPill";
 
@@ -14,11 +14,6 @@ import { AvailabilityPill } from "./StatusPill";
  * the user's hardware to no purpose — the picker is itself the system's list
  * of what is plugged in, so that is where a new drive comes from.
  */
-
-/** Truncates an identity for display; the full value is on the title. */
-function shortIdentity(value: string): string {
-  return value.length <= 22 ? value : `${value.slice(0, 10)}…${value.slice(-8)}`;
-}
 
 export function DrivesTable({
   rows,
@@ -76,10 +71,9 @@ export function DrivesTable({
                 {[
                   ["Name", 180],
                   ["Name in Explorer", 160],
-                  ["Drive", 80],
-                  ["Status", 130],
+                  ["Status", 200],
                   ["Rules", 70],
-                  ["Identity", 180],
+                  ["Identity", 230],
                   ["", 90],
                 ].map(([header, width]) => (
                   <th
@@ -140,10 +134,7 @@ function DriveRowCells({
         {volume.label ?? "—"}
       </td>
       <td className="border-b border-border px-3 py-1.5 align-middle">
-        {mount_point ?? <span className="text-fg-muted">—</span>}
-      </td>
-      <td className="border-b border-border px-3 py-1.5 align-middle">
-        <AvailabilityPill availability={availability} />
+        <AvailabilityPill availability={availability} mount={mount_point} />
       </td>
       <td className="border-b border-border px-3 py-1.5 align-middle">
         {inUse ? row.rule_count : <span className="text-fg-muted">—</span>}
@@ -152,7 +143,7 @@ function DriveRowCells({
         className="truncate border-b border-border px-3 py-1.5 align-middle font-mono text-[11px] text-fg-muted"
         title={volume.identity.value}
       >
-        {shortIdentity(volume.identity.value)}
+        {identityLabel(volume.identity)}
       </td>
       <td className="border-b border-border px-3 py-1.5 align-middle text-xs">
         {/* Forgetting a drive a rule points at would delete backup rules as

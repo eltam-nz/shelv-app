@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
@@ -143,14 +143,35 @@ describe("DrivesTable", () => {
     );
   });
 
-  it("shows the drive letter and status of an attached drive", () => {
+  it("says where an attached drive is, inside its status", () => {
+    // The letter qualifies "this drive is here right now". In a column of
+    // its own it reads as part of the drive's identity, which is the one
+    // thing it is not.
     render(<DrivesTable rows={[drive()]} onRename={noop} onForget={noop} onAdd={noop} />);
-    const row = screen.getAllByRole("row")[1];
-    expect(row).toBeDefined();
-    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-    expect(within(row!).getByText("E:\\")).toBeInTheDocument();
-    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-    expect(within(row!).getByText("Available")).toBeInTheDocument();
+    expect(screen.getByText("Available — E:\\")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("columnheader", { name: /^Drive$/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows no location for a drive that is not attached", () => {
+    const detached = drive();
+    detached.status.availability = "disconnected";
+    detached.status.mount_point = null;
+
+    render(
+      <DrivesTable rows={[detached]} onRename={noop} onForget={noop} onAdd={noop} />,
+    );
+    expect(screen.getByText("Disconnected")).toBeInTheDocument();
+  });
+
+  it("shows only the GUID of a Windows identity", () => {
+    render(<DrivesTable rows={[drive()]} onRename={noop} onForget={noop} onAdd={noop} />);
+    const shown = screen.getByText("{9f1c2d3e-4a5b-6c7d-8e9f-0a1b2c3d4e5f}");
+    expect(shown).toBeInTheDocument();
+    // The stored value is never rewritten — it is what recognises the drive
+    // across reconnections — so the whole of it stays on the title.
+    expect(shown).toHaveAttribute("title", expect.stringContaining("Volume{"));
   });
 
   it("explains an empty pane rather than showing a bare grid", () => {

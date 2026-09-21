@@ -1,4 +1,4 @@
-import type { VolumeStatus } from "../types";
+import type { VolumeIdentity, VolumeStatus } from "../types";
 
 /**
  * Naming a drive for display.
@@ -112,4 +112,21 @@ export function joinPath(mount: string, relative: string): string {
 export function fullPath(status: VolumeStatus, relative: string): string | null {
   const mount = mountPoint(status);
   return mount === null ? null : joinPath(mount, relative);
+}
+
+/**
+ * A volume identity, shortened to the part that identifies it.
+ *
+ * Windows reports a volume GUID *path* —
+ * `\\\\?\\Volume{9f1c2d3e-…-0a1b2c3d4e5f}\\` — of which the braced GUID is the
+ * whole content and the rest is the same eleven characters on every row.
+ * Linux UUIDs have no such wrapper and are shown as they are.
+ *
+ * Presentation only. The stored value is never rewritten: it is what
+ * recognises a drive across reconnections, and trimming what gets compared
+ * would be a way to match the wrong disk.
+ */
+export function identityLabel(identity: VolumeIdentity): string {
+  const braced = /\{[^{}]+\}/.exec(identity.value);
+  return braced?.[0] ?? identity.value;
 }

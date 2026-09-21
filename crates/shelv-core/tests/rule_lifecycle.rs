@@ -28,6 +28,7 @@ use shelv_core::safety::{check_rule, RuleProblem};
 use shelv_core::store::Store;
 use shelv_core::view::{drive_rows, refresh_stored_volumes, rule_rows, Availability};
 use shelv_core::volumes::resolve_picked_folder;
+use shelv_core::watch::VolumeWatch;
 use shelv_core::{CoreError, Result};
 
 /// A platform whose attached volumes the test controls.
@@ -451,4 +452,137 @@ fn a_nickname_outlives_the_drive_being_unplugged_and_renamed() {
         Some("Renamed In Explorer"),
         "the label follows the OS; the nickname does not"
     );
+}
+
+#[test]
+fn a_drive_that_comes_back_on_a_different_letter_stays_the_same_drive() {
+    // The case the whole identity scheme exists for. Windows hands drive
+    // letters out to whichever disk asks first, so the same drive routinely
+    // returns as F: after being E:, and Shelv must follow it rather than
+    // report it missing — or, far worse, follow the letter to whatever is
+    // there now.
+    let store = Store::open_in_memory().unwrap();
+    let fs = system_and_backup();
+
+    let source = resolve_picked_folder(&store, &fs, Path::new("/root/Pictures"), 1000).unwrap();
+    let destination =
+        resolve_picked_folder(&store, &fs, Path::new("/media/backup/Backups"), 1000).unwrap();
+    let rule = store
+        .create_rule(&spec("Photos", source.path), 1000)
+        .unwrap();
+    store.add_destination(rule, &destination.path, 0).unwrap();
+    store
+        .set_volume_nickname(destination.path.volume, Some("Archive 4TB"))
+        .unwrap();
+
+    assert_eq!(
+        store.volume(destination.path.volume).unwrap().last_mount,
+        Some(PathBuf::from("/media/backup"))
+    );
+
+    // Same drive, new mount point. Only the mount changes; the identity is
+    // what says it is the same disk.
+    let mut moved = volume("/media/elsewhere", "Backup Drive", DriveType::Removable);
+    moved.identity.value = "uuid-Backup Drive".to_owned();
+    let relocated = StubFs {
+        volumes: vec![volume("/", "System", DriveType::Fixed), moved],
+    };
+
+    // Checked *before* anything writes the new mount back, so this is
+    // classification working from the stale record — which is the only way
+    // it proves the match is on identity. Assert after a refresh and the
+    // test passes even if the lookup is keyed on the mount point, because
+    // the refresh will have just corrected it.
+    let row = drive_rows(&store, &relocated)
+        .unwrap()
+        .into_iter()
+        .find(|r| r.status.volume.id == destination.path.volume)
+        .expect("still one drive, recognised by identity");
+    assert_eq!(
+        row.status.availability,
+        Availability::Available,
+        "the drive moved; it did not go away"
+    );
+    assert_eq!(
+        row.status.mount_point,
+        Some(PathBuf::from("/media/elsewhere"))
+    );
+    assert_eq!(row.status.volume.nickname.as_deref(), Some("Archive 4TB"));
+
+    // A poll notices, because the mount point is part of what it compares.
+    let mut watch = VolumeWatch::new();
+    watch.poll(&store, &fs, 1000).unwrap();
+    let poll = watch.poll(&store, &relocated, 2000).unwrap();
+    assert!(
+        poll.changed,
+        "moving to another letter is a change to report"
+    );
+
+    // ...the rule can still run...
+    let rule_row = rule_rows(&store, &relocated)
+        .unwrap()
+        .into_iter()
+        .next()
+        .unwrap();
+    assert_eq!(
+        rule_row.destinations.first().unwrap().status.availability,
+        Availability::Available
+    );
+    assert!(rule_row.is_runnable());
+
+    // ...and the new location is what gets written back, so a later
+    // disconnection reports where it actually was.
+    assert_eq!(
+        store.volume(destination.path.volume).unwrap().last_mount,
+        Some(PathBuf::from("/media/elsewhere")),
+        "the recorded mount follows the drive"
+    );
+}
+
+#[test]
+fn a_drive_that_moved_is_not_confused_with_whatever_took_its_old_letter() {
+    // The dangerous combination, and the one worth being sure about: our
+    // drive moves to a new mount point *and* a different disk appears at the
+    // old one. Following the letter here would write the backup onto a
+    // stranger's drive.
+    let store = Store::open_in_memory().unwrap();
+    let fs = system_and_backup();
+
+    let source = resolve_picked_folder(&store, &fs, Path::new("/root/Pictures"), 1000).unwrap();
+    let ours =
+        resolve_picked_folder(&store, &fs, Path::new("/media/backup/Backups"), 1000).unwrap();
+    let rule = store
+        .create_rule(&spec("Photos", source.path), 1000)
+        .unwrap();
+    store.add_destination(rule, &ours.path, 0).unwrap();
+
+    let mut moved = volume("/media/elsewhere", "Backup Drive", DriveType::Removable);
+    moved.identity.value = "uuid-Backup Drive".to_owned();
+    let mut squatter = volume("/media/backup", "Not Yours", DriveType::Removable);
+    squatter.identity.value = "uuid-someone-else".to_owned();
+
+    let swapped = StubFs {
+        volumes: vec![volume("/", "System", DriveType::Fixed), moved, squatter],
+    };
+
+    let row = drive_rows(&store, &swapped)
+        .unwrap()
+        .into_iter()
+        .find(|r| r.status.volume.id == ours.path.volume)
+        .expect("our drive");
+
+    assert_eq!(
+        row.status.availability,
+        Availability::Available,
+        "our drive is present, at its new mount point"
+    );
+    assert_eq!(
+        row.status.mount_point,
+        Some(PathBuf::from("/media/elsewhere")),
+        "never the old mount point, which now belongs to another disk"
+    );
+
+    // And the stranger is not adopted: a drive enters Shelv by being picked,
+    // never by turning up.
+    assert_eq!(drive_rows(&store, &swapped).unwrap().len(), 2);
 }

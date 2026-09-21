@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import { driveName, formatLocation, fullPath, joinPath, volumeName } from "./volumes";
+import {
+  driveName,
+  formatLocation,
+  fullPath,
+  identityLabel,
+  joinPath,
+  volumeName,
+} from "./volumes";
 import type { VolumeStatus } from "../types";
 
 function status(over: Partial<VolumeStatus["volume"]> & { mount?: string | null }) {
@@ -133,6 +140,32 @@ describe("driveName precedence", () => {
   it("falls back to the Explorer label when no nickname is set", () => {
     expect(driveName({ nickname: null, label: "Expansion", mount: "E:\\" })).toBe(
       "Expansion",
+    );
+  });
+});
+
+describe("identityLabel", () => {
+  it("keeps only the GUID from a Windows volume path", () => {
+    expect(
+      identityLabel({
+        kind: "windows_volume_guid",
+        value: "\\\\?\\Volume{9f1c2d3e-4a5b-6c7d-8e9f-0a1b2c3d4e5f}\\",
+      }),
+    ).toBe("{9f1c2d3e-4a5b-6c7d-8e9f-0a1b2c3d4e5f}");
+  });
+
+  it("shows a Linux UUID unchanged", () => {
+    expect(
+      identityLabel({
+        kind: "linux_fs_uuid",
+        value: "6f3a1b2c-4d5e-6f70-8192-a3b4c5d6e7f8",
+      }),
+    ).toBe("6f3a1b2c-4d5e-6f70-8192-a3b4c5d6e7f8");
+  });
+
+  it("falls back to the whole value when there is no braced part", () => {
+    expect(identityLabel({ kind: "unverified", value: "/media/backup" })).toBe(
+      "/media/backup",
     );
   });
 });
