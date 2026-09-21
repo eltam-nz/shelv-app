@@ -5,6 +5,7 @@ import { DrivesTable } from "./components/DrivesTable";
 import { RuleEditor } from "./components/RuleEditor";
 import { RuleTable, type ViewMode } from "./components/RuleTable";
 import { SplitPane } from "./components/SplitPane";
+import { TagFilterMenu } from "./components/TagFilterMenu";
 import { TagManager } from "./components/TagManager";
 import {
   deleteRule,
@@ -17,7 +18,7 @@ import {
   setDriveNickname,
   ShelvError,
 } from "./lib/ipc";
-import { tagStyle } from "./lib/palette";
+import { retainExistingTags } from "./lib/tags";
 import type { DriveRow, RuleRow, Tag, TagId, VolumeId } from "./types";
 
 type Panel =
@@ -79,6 +80,10 @@ export function App() {
       setRows(nextRows);
       setTags(nextTags);
       setDrives(nextDrives);
+      // A tag can be deleted while it is being filtered by. Left alone, the
+      // id would match nothing and the table would sit empty blaming a tag
+      // that is no longer anywhere on screen.
+      setFilter((current) => retainExistingTags(current, nextTags));
       setError(null);
     } catch (e: unknown) {
       setError(e instanceof ShelvError ? e.message : String(e));
@@ -171,38 +176,14 @@ export function App() {
         title="Shelv — Backup Manager"
         actions={
           <div className="flex items-center gap-3">
-            {tags.length > 0 && (
-              <div className="flex items-center gap-1.5">
-                {tags.map((tag) => {
-                  const active = filter.includes(tag.id);
-                  return (
-                    <button
-                      key={tag.id}
-                      type="button"
-                      onClick={() => {
-                        setFilter((current) =>
-                          current.includes(tag.id)
-                            ? current.filter((t) => t !== tag.id)
-                            : [...current, tag.id],
-                        );
-                      }}
-                      aria-pressed={active}
-                      title={
-                        active ? `Stop filtering by ${tag.name}` : `Show only ${tag.name}`
-                      }
-                      className="rounded px-2 py-0.5 text-xs"
-                      style={
-                        active
-                          ? tagStyle(tag.colour)
-                          : { color: "var(--fg-muted)", backgroundColor: "transparent" }
-                      }
-                    >
-                      {tag.name}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
+            <TagFilterMenu
+              tags={tags}
+              filter={filter}
+              onFilterChange={setFilter}
+              onEditTags={() => {
+                setPanel({ kind: "tags" });
+              }}
+            />
             <ViewToggle view={view} onChange={setView} />
             <button
               type="button"
@@ -222,15 +203,6 @@ export function App() {
               }
             >
               Drives
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setPanel({ kind: "tags" });
-              }}
-              className="text-xs text-fg-muted hover:text-fg"
-            >
-              Tags…
             </button>
             <button
               type="button"

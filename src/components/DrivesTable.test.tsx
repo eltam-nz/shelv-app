@@ -174,6 +174,34 @@ describe("DrivesTable", () => {
     expect(shown).toHaveAttribute("title", expect.stringContaining("Volume{"));
   });
 
+  it("titles the pane above the level of its own column labels", () => {
+    // It used to carry the exact styling of the column headers beneath it,
+    // so it read as one more column label rather than the title of a pane.
+    render(<DrivesTable rows={[drive()]} onRename={noop} onForget={noop} onAdd={noop} />);
+
+    const heading = screen.getByRole("heading", { name: "Drives" });
+    expect(heading.className).toContain("font-semibold");
+    expect(heading.className).not.toContain("uppercase");
+  });
+
+  it("counts the drives, and how many can actually be written to", () => {
+    // "Connected" must not include a drive that is plugged in and refused:
+    // it is present and still unusable, and counting it overstates what is
+    // ready to run.
+    const refused = drive({ id: 2 });
+    refused.status.availability = "refused";
+
+    render(
+      <DrivesTable
+        rows={[drive(), refused]}
+        onRename={noop}
+        onForget={noop}
+        onAdd={noop}
+      />,
+    );
+    expect(screen.getByText("2 drives · 1 connected")).toBeInTheDocument();
+  });
+
   it("explains an empty pane rather than showing a bare grid", () => {
     render(<DrivesTable rows={[]} onRename={noop} onForget={noop} onAdd={noop} />);
     expect(screen.getByText(/No drives yet/i)).toBeInTheDocument();

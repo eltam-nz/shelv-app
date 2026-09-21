@@ -15,6 +15,21 @@ import { AvailabilityPill } from "./StatusPill";
  * of what is plugged in, so that is where a new drive comes from.
  */
 
+/**
+ * How many drives there are and how many are reachable.
+ *
+ * The heading earns its extra weight by carrying something, the way the
+ * status bar does for rules. "Connected" counts drives that can actually be
+ * written to, not merely ones that are plugged in: a refused or
+ * unidentifiable drive is present and still unusable, and counting it would
+ * overstate what is ready.
+ */
+function summarise(rows: DriveRow[]): string {
+  const connected = rows.filter((r) => r.status.availability === "available").length;
+  const drives = `${String(rows.length)} ${rows.length === 1 ? "drive" : "drives"}`;
+  return `${drives} · ${String(connected)} connected`;
+}
+
 export function DrivesTable({
   rows,
   onRename,
@@ -31,10 +46,20 @@ export function DrivesTable({
 }) {
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <header className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-3 py-2">
-        <h2 className="text-xs font-medium tracking-wide text-fg-muted uppercase">
-          Drives
-        </h2>
+      {/* `bg-surface` rather than the page background, so the pane reads as
+          its own panel: it separates this from the rules table above and
+          from its own sticky column headers below, which are `bg-bg`. The
+          heading takes the same level every other panel heading in the app
+          uses, instead of the column-label styling it had — identical to the
+          "NAME" and "STATUS" directly beneath it, which is why it read as
+          one more column rather than as the title of anything. */}
+      <header className="flex shrink-0 items-center justify-between gap-3 border-b border-border bg-surface px-3 py-2.5">
+        <div className="flex min-w-0 items-baseline gap-2.5">
+          <h2 className="text-sm font-semibold tracking-tight">Drives</h2>
+          {rows.length > 0 && (
+            <span className="truncate text-xs text-fg-muted">{summarise(rows)}</span>
+          )}
+        </div>
         <div className="flex items-center gap-3">
           {error != null && error !== "" && (
             <span className="text-xs" style={{ color: "var(--status-mismatch)" }}>
