@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 
+import { AboutPanel } from "./components/AboutPanel";
 import { AppShell } from "./components/AppShell";
 import { DrivesTable } from "./components/DrivesTable";
 import { RuleEditor } from "./components/RuleEditor";
@@ -26,6 +27,7 @@ type Panel =
   | { kind: "new-rule" }
   | { kind: "edit-rule"; row: RuleRow }
   | { kind: "tags" }
+  | { kind: "about" }
   | { kind: "confirm-delete"; row: RuleRow };
 
 /**
@@ -233,6 +235,18 @@ export function App() {
             </>
           )
         }
+        statusRight={
+          <button
+            type="button"
+            onClick={() => {
+              setPanel({ kind: "about" });
+            }}
+            title="Version, and where Shelv keeps your rules"
+            className="shrink-0 whitespace-nowrap text-fg-muted hover:text-fg"
+          >
+            About Shelv
+          </button>
+        }
       >
         {!loading &&
           error === null &&
@@ -297,6 +311,8 @@ export function App() {
           }}
         />
       )}
+
+      {panel.kind === "about" && <AboutPanel onClose={close} />}
 
       {panel.kind === "confirm-delete" && (
         <ConfirmDelete

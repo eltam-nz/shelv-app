@@ -39,7 +39,7 @@
 use serde_json::json;
 use tauri::test::{get_ipc_response, mock_builder, mock_context, noop_assets, INVOKE_KEY};
 use tauri::webview::InvokeRequest;
-use tauri::{Manager, WebviewWindowBuilder};
+use tauri::WebviewWindowBuilder;
 
 /// Reads a config file from the crate root at run time.
 ///
@@ -291,12 +291,46 @@ fn the_main_window_is_the_one_the_capability_applies_to() {
 
     assert_eq!(windows, vec!["main"], "only the main window is reviewed");
 
-    let app = build_app();
+    // The label the app actually builds under has to be one of those, or the
+    // window holds no permissions at all. That used to be asserted by
+    // building a window called "main" and checking it succeeded, which
+    // proved nothing: building a window under any label succeeds. Since the
+    // window moved into Rust the label is a constant, so compare it.
     assert!(
-        app.webview_windows().contains_key("main")
-            || WebviewWindowBuilder::new(&app, "main", tauri::WebviewUrl::default())
-                .build()
-                .is_ok(),
-        "the app should have a window labelled 'main'"
+        windows.contains(&crate::MAIN_WINDOW_LABEL),
+        "the window Shelv opens is labelled '{}', which the capability does \
+         not cover: it would start with none of its permissions, losing \
+         core:event and with it the live drive updates — no error, just a \
+         table quietly going stale",
+        crate::MAIN_WINDOW_LABEL,
+    );
+}
+
+#[test]
+fn the_webview_profile_sits_beside_the_database() {
+    // Both under one product-named folder, rather than the database under
+    // the product name and the webview under the reverse-DNS identifier,
+    // which is what Tauri does when left alone. Two differently named
+    // folders means anyone clearing Shelv's data finds one of them.
+    let fs = shelv_core::platform::host_fs();
+    let data_dir = fs.data_dir().expect("a data directory");
+    let database = shelv_core::store::Store::default_path(fs.as_ref()).expect("a database path");
+    let profile = crate::webview_profile_dir(&data_dir);
+
+    // Asserted as containment rather than as a shared parent, because the
+    // two webview runtimes disagree about the shape: WebView2 makes itself
+    // an `EBWebView` subdirectory, WebKitGTK writes straight into the folder
+    // it is given. What has to hold on both is that one folder holds
+    // everything.
+    assert_eq!(
+        database.parent(),
+        Some(data_dir.as_path()),
+        "the database should sit directly in the data directory"
+    );
+    assert!(
+        profile.starts_with(&data_dir),
+        "the webview profile ({}) should be at or inside {}",
+        profile.display(),
+        data_dir.display()
     );
 }

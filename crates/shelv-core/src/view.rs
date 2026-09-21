@@ -138,6 +138,23 @@ pub fn drive_rows(store: &Store, fs: &dyn PlatformFs) -> Result<Vec<DriveRow>> {
         .collect()
 }
 
+/// Where Shelv keeps what it remembers.
+///
+/// Both paths are derived from the user's local application data folder, not
+/// from where the executable sits — which is why replacing the binary keeps
+/// every rule, drive and nickname. That is the intent: an update must not
+/// lose someone's backup configuration.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
+#[ts(export, export_to = "../../../src/types/")]
+pub struct DataLocations {
+    /// The `SQLite` database: rules, destinations, tags, drives and history.
+    pub database: PathBuf,
+    /// The webview's profile directory, which holds the window's own
+    /// preferences. Filled in by the shell, which is what decides where the
+    /// webview keeps it.
+    pub webview_profile: PathBuf,
+}
+
 /// Classifies every recorded volume against what is attached right now.
 pub fn volume_statuses(store: &Store, fs: &dyn PlatformFs) -> Result<Vec<VolumeStatus>> {
     let attached = fs.volumes()?;

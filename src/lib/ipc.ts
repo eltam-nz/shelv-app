@@ -17,6 +17,7 @@ import { listen } from "@tauri-apps/api/event";
 
 import type {
   CoreError,
+  DataLocations,
   DestinationId,
   DriveRow,
   PickedFolder,
@@ -85,6 +86,25 @@ async function callVoid(cmd: string, args?: Record<string, unknown>): Promise<vo
 
 /** The running application version. */
 export const appVersion = (): Promise<string> => call<string>("app_version");
+
+/**
+ * Where Shelv keeps its database and the window's own preferences.
+ *
+ * Reported by the backend from the directories it actually opened, rather
+ * than rebuilt here, so the About panel cannot name a folder the app is not
+ * using.
+ */
+export const dataLocations = (): Promise<DataLocations> =>
+  call<DataLocations>("data_locations");
+
+/**
+ * Opens Shelv's data folder in the system file manager.
+ *
+ * Takes no path. A general "open this path" capability would let this side
+ * ask the operating system to launch anything at all, which is the widening
+ * the id-only command surface exists to prevent (docs/PLAN.md §4, T1).
+ */
+export const revealDataFolder = (): Promise<void> => callVoid("reveal_data_folder");
 
 /** Every rule, with tags, destinations, availability and last result. */
 export const listRules = (): Promise<RuleRow[]> => call<RuleRow[]>("list_rules");

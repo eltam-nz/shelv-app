@@ -6,6 +6,7 @@
 export type { Availability } from "./Availability";
 export type { CaseSensitivity } from "./CaseSensitivity";
 export type { CoreError } from "./CoreError";
+export type { DataLocations } from "./DataLocations";
 export type { Destination } from "./Destination";
 export type { DestinationId } from "./DestinationId";
 export type { DestinationStatus } from "./DestinationStatus";

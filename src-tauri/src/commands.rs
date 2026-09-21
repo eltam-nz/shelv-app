@@ -23,7 +23,9 @@ use shelv_core::model::{Rule, RuleId, RuleSpec, Run, Tag, TagId, VolumePath};
 use shelv_core::platform::PlatformFs;
 use shelv_core::safety::{check_rule, RuleProblem};
 use shelv_core::store::Store;
-use shelv_core::view::{drive_rows, rule_rows, volume_statuses, DriveRow, RuleRow, VolumeStatus};
+use shelv_core::view::{
+    drive_rows, rule_rows, volume_statuses, DataLocations, DriveRow, RuleRow, VolumeStatus,
+};
 use shelv_core::volumes::{resolve_picked_folder, PickedFolder};
 use shelv_core::{CoreError, Result};
 use tauri::ipc::Invoke;
@@ -86,6 +88,51 @@ impl std::fmt::Debug for AppState {
 #[tauri::command]
 fn app_version() -> &'static str {
     env!("CARGO_PKG_VERSION")
+}
+
+/// Where Shelv keeps its database and the window's own preferences.
+///
+/// Derived from the same `data_dir` the window and the store were opened
+/// from, rather than rebuilt from the product name, so the About panel
+/// cannot end up naming a folder the app is not actually using.
+#[tauri::command]
+fn data_locations(state: State<'_, AppState>) -> Result<DataLocations> {
+    let data_dir = state.fs.data_dir()?;
+    Ok(DataLocations {
+        database: Store::default_path(state.fs.as_ref())?,
+        webview_profile: crate::webview_profile_dir(&data_dir),
+    })
+}
+
+/// Opens Shelv's data folder in the system file manager.
+///
+/// Takes **no path**, and that is the point. Granting the frontend a
+/// general "open this path" capability would let a compromised `WebView` ask
+/// the operating system to launch anything it liked, which is precisely the
+/// widening the id-only command surface exists to prevent (`docs/PLAN.md`
+/// §4, T1). This opens one directory, chosen here.
+#[tauri::command]
+fn reveal_data_folder(state: State<'_, AppState>) -> Result<()> {
+    let data_dir = state.fs.data_dir()?;
+
+    // The folder may not exist yet on a first run that has not written
+    // anything. Creating it is friendlier than opening a file manager on
+    // nothing, and it is the same directory the store would create anyway.
+    std::fs::create_dir_all(&data_dir)?;
+
+    let program = if cfg!(windows) {
+        "explorer.exe"
+    } else {
+        "xdg-open"
+    };
+    std::process::Command::new(program)
+        .arg(&data_dir)
+        .spawn()
+        // Explorer exits non-zero in cases where it has still done the right
+        // thing, so the child is deliberately not waited on: whether the
+        // window appeared is the user's to see, not ours to adjudicate.
+        .map_err(|e| CoreError::Io(format!("could not open {}: {e}", data_dir.display())))?;
+    Ok(())
 }
 
 /// Every rule, with its tags, destinations, availability and last result.
@@ -375,6 +422,8 @@ pub fn now() -> i64 {
 pub fn handlers<R: Runtime>() -> impl Fn(Invoke<R>) -> bool + Send + Sync + 'static {
     tauri::generate_handler![
         app_version,
+        data_locations,
+        reveal_data_folder,
         pick_folder,
         validate_rule,
         list_rules,

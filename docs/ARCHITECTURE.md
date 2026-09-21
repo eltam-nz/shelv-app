@@ -53,6 +53,48 @@ a concrete implementation. `scripts/check-platform-boundary.sh` fails CI if the
 | `volumes/` | Volume tracking and identity verification. **M1.** |
 | `watch/` | Notices that the set of attached drives has changed, and reports it only when it really has. |
 
+### Where Shelv keeps things
+
+Everything lives under one product-named folder in the user's local
+application data — `%LOCALAPPDATA%\Shelv` on Windows:
+
+```
+Shelv\
+    shelv.db          rules, destinations, tags, drives, run history
+    shelv.db-wal      SQLite's write-ahead log
+    shelv.db-shm
+    EBWebView\        the webview's profile: the window's own preferences
+```
+
+Neither path involves the executable, which is why replacing the binary
+keeps every rule. That is the point: an update must not lose someone's
+backup configuration.
+
+The webview's profile takes a deliberate detour to get there. Tauri files it
+under the reverse-DNS identifier by default — `%LOCALAPPDATA%\nz.eltam.shelv`
+— which would leave Shelv's data in two differently named sibling folders,
+so anyone clearing it out finds one and leaves the other. A `dataDirectory`
+in `tauri.conf.json` cannot fix it either: that value is resolved relative to
+`<local data>/<window label>`, and an absolute one is discarded. So the
+window is built in `src-tauri/src/lib.rs` rather than declared in the config,
+purely so `data_directory` can point at the folder the database was opened
+from.
+
+That has one consequence worth knowing: the window's **label is
+load-bearing**. `capabilities/default.json` scopes its permissions to
+`windows: ["main"]`, so a window under any other label starts with none of
+them. The cost is `core:default`, and within it `core:event`, which is what
+`listen` needs — so the rule table and drives pane would stop following
+attached drives, with no error to say why. (Not the folder picker: that runs
+`dialog()` from Rust inside `pick_folder`, and the ACL gates commands
+invoked from the webview rather than plugin calls the backend makes itself.)
+Nothing fails loudly if the label drifts, so `MAIN_WINDOW_LABEL` is a
+constant and `security_tests` checks it against the manifest.
+
+The About panel reports both paths, through a `data_locations` command that
+reads them from the same directories the app actually opened rather than
+rebuilding them from the product name.
+
 ### Naming a drive
 
 A drive is shown by the first of these that exists: the **nickname** the user
