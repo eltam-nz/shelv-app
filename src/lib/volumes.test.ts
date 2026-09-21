@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { formatLocation, fullPath, isExternal, joinPath, volumeName } from "./volumes";
+import { driveName, formatLocation, fullPath, joinPath, volumeName } from "./volumes";
 import type { VolumeStatus } from "../types";
 
 function status(over: Partial<VolumeStatus["volume"]> & { mount?: string | null }) {
@@ -30,7 +30,7 @@ describe("volumeName", () => {
     );
   });
 
-  it("falls back to where the drive is mounted", () => {
+  it("falls back to where the drive is mounted when nothing else names it", () => {
     // Plenty of drives have no label — a freshly formatted one usually does
     // not — and a bare "?" tells the reader nothing about which disk a rule
     // points at.
@@ -97,9 +97,19 @@ describe("fullPath", () => {
   });
 });
 
-describe("isExternal", () => {
-  it("is true only for a drive that gets unplugged", () => {
-    expect(isExternal(status({ drive_type: "removable" }))).toBe(true);
-    expect(isExternal(status({ drive_type: "fixed" }))).toBe(false);
+describe("driveName", () => {
+  it("prefers the serial over the mount point for an unlabelled drive", () => {
+    // Two unlabelled drives that have taken turns in the same port would
+    // both be called "E:\\", which does not merely fail to help — it says
+    // they are the same drive.
+    expect(driveName({ label: null, serial: "1A2B3C4D", mount: "E:\\" })).toBe(
+      "Unnamed drive (1A2B3C4D)",
+    );
+  });
+
+  it("falls back to the mount point when there is no serial either", () => {
+    expect(driveName({ label: null, serial: null, mount: "/media/backup" })).toBe(
+      "/media/backup",
+    );
   });
 });

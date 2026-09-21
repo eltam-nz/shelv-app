@@ -9,6 +9,14 @@ import { RuleEditor } from "./RuleEditor";
 // backend in a unit test, so the IPC module is stubbed; what is under test
 // here is the copy the editor puts in front of someone about to save a
 // standing instruction that can delete files.
+const picked = {
+  path: { volume: 99, relative: "Backups\\Photos" },
+  volume_label: "Archive 4TB",
+  volume_serial: "1A2B3C4D",
+  mount_point: "E:\\",
+  display_path: "E:\\Backups\\Photos",
+};
+
 vi.mock("../lib/ipc", () => ({
   createRule: vi.fn(),
   pickFolder: vi.fn(),
@@ -71,5 +79,35 @@ describe("RuleEditor", () => {
     expect(
       screen.getByText(/Nothing is deleted from a previous snapshot/i),
     ).toBeInTheDocument();
+  });
+});
+
+describe("RuleEditor destinations", () => {
+  it("names the drive of a destination as soon as it is picked", async () => {
+    // A just-picked destination used to render the bare absolute path while
+    // a saved one rendered `Drive · relative`, so the same folder read
+    // differently depending on how it got here — and the drive, the part
+    // that matters for a disk that comes and goes, was missing from exactly
+    // the moment the user was choosing it.
+    const { pickFolder } = await import("../lib/ipc");
+    vi.mocked(pickFolder).mockResolvedValue(picked);
+
+    const user = userEvent.setup();
+    editFirstRule();
+    await user.click(screen.getByText("Add destination…"));
+
+    expect(await screen.findByText("E:\\Backups\\Photos")).toBeInTheDocument();
+    expect(screen.getAllByText("Archive 4TB").length).toBeGreaterThan(0);
+  });
+
+  it("falls back to the serial when the picked drive has no label", async () => {
+    const { pickFolder } = await import("../lib/ipc");
+    vi.mocked(pickFolder).mockResolvedValue({ ...picked, volume_label: null });
+
+    const user = userEvent.setup();
+    editFirstRule();
+    await user.click(screen.getByText("Add destination…"));
+
+    expect(await screen.findByText("Unnamed drive (1A2B3C4D)")).toBeInTheDocument();
   });
 });

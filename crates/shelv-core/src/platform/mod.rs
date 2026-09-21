@@ -84,7 +84,15 @@ pub struct VolumeIdentity {
 pub enum DriveType {
     /// An internal disk.
     Fixed,
-    /// An external disk, USB stick or memory card.
+    /// Media that comes out of the device: a USB flash stick, a memory card,
+    /// a card reader.
+    ///
+    /// **This does not mean "external".** Windows' `GetDriveType` reports
+    /// `DRIVE_REMOVABLE` for removable *media*, so a USB hard disk or SSD in
+    /// an enclosure — fixed media inside a device you unplug — comes back as
+    /// [`Fixed`](Self::Fixed). Anything that wants to know whether a drive
+    /// comes and goes must not ask this; Shelv assumes every destination
+    /// does (see `DriveLocation` in the UI).
     Removable,
     /// SMB, NFS, sshfs or another remote filesystem. Always refused.
     Network,

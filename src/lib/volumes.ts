@@ -6,23 +6,51 @@ import type { VolumeStatus } from "../types";
  * Shared between the table and the editor so a rule reads the same in both.
  */
 
+/** The parts of a drive's identity that can contribute to its name. */
+export interface DriveNameParts {
+  /** The filesystem label, if the drive has one. */
+  label: string | null;
+  /** The volume serial, where the platform reports one. */
+  serial?: string | null;
+  /** Where the drive is mounted right now. */
+  mount: string | null;
+  /** Where it was last seen mounted. */
+  lastMount?: string | null;
+}
+
 /**
  * The best available name for a drive.
  *
  * Plenty of drives have no filesystem label — a freshly formatted one usually
- * does not, and Linux only reports one when udev has published it. Falling
- * back to where the drive is, or was, mounted is far more use than a bare
- * "?", which tells the reader nothing about which disk a rule points at.
+ * does not, and Linux only reports one when udev has published it.
+ *
+ * The serial comes before the mount point in the fallback chain, even though
+ * it is uglier, because it identifies the drive and the mount point does not.
+ * Two unlabelled drives that have taken turns in the same USB port would
+ * otherwise both be called `E:\\`, which is worse than unhelpful: it says
+ * they are the same drive.
  */
-export function volumeName(status: VolumeStatus): string {
-  const label = status.volume.label;
+export function driveName(parts: DriveNameParts): string {
+  const { label, serial, mount, lastMount } = parts;
   if (label !== null && label !== "") return label;
-  if (status.mount_point !== null && status.mount_point !== "") {
-    return status.mount_point;
+  if (serial !== null && serial !== undefined && serial !== "") {
+    return `Unnamed drive (${serial})`;
   }
-  const last = status.volume.last_mount;
-  if (last !== null && last !== "") return last;
+  if (mount !== null && mount !== "") return mount;
+  if (lastMount !== null && lastMount !== undefined && lastMount !== "") {
+    return lastMount;
+  }
   return "Unnamed drive";
+}
+
+/** The best available name for a recorded drive. */
+export function volumeName(status: VolumeStatus): string {
+  return driveName({
+    label: status.volume.label,
+    serial: status.volume.serial,
+    mount: status.mount_point,
+    lastMount: status.volume.last_mount,
+  });
 }
 
 /** A stored location, as `Drive · relative/path`. */
@@ -30,18 +58,6 @@ export function formatLocation(status: VolumeStatus, relative: string): string {
   const name = volumeName(status);
   // A location at the volume root has no relative part to show.
   return relative === "" ? name : `${name} · ${relative}`;
-}
-
-/**
- * Whether this is a drive the user plugs in and unplugs.
- *
- * Only these get a drive-name line of their own in the table: on an internal
- * disk the path already says everything — `C:\Users\...` is unambiguous —
- * whereas on a removable one the same path can belong to any of several
- * drives, and which one it is is the whole question.
- */
-export function isExternal(status: VolumeStatus): boolean {
-  return status.volume.drive_type === "removable";
 }
 
 /**

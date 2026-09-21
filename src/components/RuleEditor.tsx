@@ -9,7 +9,8 @@ import {
   validateRule,
 } from "../lib/ipc";
 import { tagStyle } from "../lib/palette";
-import { volumeName } from "../lib/volumes";
+import { driveName, formatLocation, fullPath, volumeName } from "../lib/volumes";
+import { DriveLocation } from "./DriveLocation";
 import {
   describeProblem,
   generalProblems,
@@ -17,6 +18,7 @@ import {
 } from "../lib/problems";
 import type {
   Layout,
+  PickedFolder,
   Packaging,
   PlaceholderPolicy,
   RuleProblem,
@@ -37,18 +39,24 @@ import type {
  * (docs/PLAN.md §4.2).
  */
 
-/** A destination being edited, with enough context to show it. */
-interface DestinationDraft {
+/**
+ * A location being edited.
+ *
+ * Carries the drive's name and the path separately rather than one
+ * pre-joined string. A freshly picked folder used to be shown as the bare
+ * absolute path while a saved one was shown as `Drive · relative`, so the
+ * same folder read differently depending on how it got here — and the drive,
+ * the part that matters for a disk that comes and goes, was missing from
+ * exactly the case where the user was choosing it.
+ */
+interface LocationDraft {
   path: VolumePath;
-  label: string | null;
+  /** The drive's name, already resolved through `driveName`. */
+  name: string;
+  /** The path to show: absolute where known. */
   display: string;
-}
-
-/** A source being edited. */
-interface SourceDraft {
-  path: VolumePath;
-  label: string | null;
-  display: string;
+  /** Whether the drive is attached right now. */
+  connected: boolean;
 }
 
 function emptySpec(source: VolumePath): RuleSpec {
@@ -69,6 +77,20 @@ function emptySpec(source: VolumePath): RuleSpec {
   };
 }
 
+/**
+ * Names the drive a just-picked folder sits on.
+ *
+ * It was picked, so it is attached: there is no last-seen mount to fall back
+ * to and none is needed.
+ */
+function draftName(picked: PickedFolder): string {
+  return driveName({
+    label: picked.volume_label,
+    serial: picked.volume_serial,
+    mount: picked.mount_point,
+  });
+}
+
 function scheduleValue(schedule: Schedule): string {
   return schedule.kind === "cron" ? "cron" : schedule.kind;
 }
@@ -86,24 +108,30 @@ export function RuleEditor({
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const [source, setSource] = useState<SourceDraft | null>(
+  const [source, setSource] = useState<LocationDraft | null>(
     existing
       ? {
           path: existing.rule.spec.source,
-          label: existing.source.volume.label,
-          display: `${volumeName(existing.source)} · ${existing.rule.spec.source.relative}`,
+          name: volumeName(existing.source),
+          display:
+            fullPath(existing.source, existing.rule.spec.source.relative) ??
+            formatLocation(existing.source, existing.rule.spec.source.relative),
+          connected: existing.source.mount_point !== null,
         }
       : null,
   );
   const [spec, setSpec] = useState<RuleSpec | null>(
     existing ? { ...existing.rule.spec } : null,
   );
-  const [destinations, setDestinations] = useState<DestinationDraft[]>(
+  const [destinations, setDestinations] = useState<LocationDraft[]>(
     existing
       ? existing.destinations.map((d) => ({
           path: d.destination.path,
-          label: d.status.volume.label,
-          display: `${volumeName(d.status)} · ${d.destination.path.relative}`,
+          name: volumeName(d.status),
+          display:
+            fullPath(d.status, d.destination.path.relative) ??
+            formatLocation(d.status, d.destination.path.relative),
+          connected: d.status.mount_point !== null,
         }))
       : [],
   );
@@ -142,10 +170,11 @@ export function RuleEditor({
     try {
       const picked = await pickFolder();
       if (!picked) return;
-      const draft: SourceDraft = {
+      const draft: LocationDraft = {
         path: picked.path,
-        label: picked.volume_label,
+        name: draftName(picked),
         display: picked.display_path,
+        connected: true,
       };
       setSource(draft);
       setSpec((current) =>
@@ -165,8 +194,9 @@ export function RuleEditor({
         ...current,
         {
           path: picked.path,
-          label: picked.volume_label,
+          name: draftName(picked),
           display: picked.display_path,
+          connected: true,
         },
       ]);
     } catch (e: unknown) {
@@ -239,9 +269,11 @@ export function RuleEditor({
                 {source ? "Change…" : "Choose folder…"}
               </button>
               {source && (
-                <span className="truncate text-fg-muted" title={source.display}>
-                  {source.display}
-                </span>
+                <DriveLocation
+                  name={source.name}
+                  path={source.display}
+                  connected={source.connected}
+                />
               )}
             </div>
           </Field>
@@ -272,9 +304,11 @@ export function RuleEditor({
                         className="rounded border border-border p-2"
                       >
                         <div className="flex items-start justify-between gap-3">
-                          <span className="truncate" title={destination.display}>
-                            {destination.display}
-                          </span>
+                          <DriveLocation
+                            name={destination.name}
+                            path={destination.display}
+                            connected={destination.connected}
+                          />
                           <button
                             type="button"
                             onClick={() => {

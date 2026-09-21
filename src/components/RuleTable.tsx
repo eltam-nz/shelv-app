@@ -10,7 +10,8 @@ import {
 import { useMemo, useState } from "react";
 
 import { tagStyle } from "../lib/palette";
-import { formatLocation, fullPath, isExternal, volumeName } from "../lib/volumes";
+import { formatLocation, fullPath, volumeName } from "../lib/volumes";
+import { DriveLocation } from "./DriveLocation";
 import type {
   Layout,
   Packaging,
@@ -142,38 +143,26 @@ function yesNo(value: boolean): string {
   return value ? "Yes" : "No";
 }
 
-/**
- * One stored location: the path on its own line, and for a drive that gets
- * unplugged, the drive's name in italics beneath it.
- *
- * Both lines are needed for an external drive and only one for an internal
- * one. `D:\Backups` identifies a folder on a fixed disk completely, but on a
- * removable drive the letter is assigned by Windows and belongs to whichever
- * disk was plugged in first, so the path alone does not say which physical
- * drive a backup is on — which is the question someone with three USB drives
- * in a drawer is actually asking. The name is re-read on every availability
- * check, so renaming a drive shows up here rather than staying stale.
- */
 const DESTINATION_ENTRY = "flex min-h-9 flex-col justify-center";
 
+/**
+ * One stored location in the table.
+ *
+ * Translates what the core records — a volume plus a path relative to it —
+ * into the path and drive name [`DriveLocation`] renders. When the drive has
+ * never been seen at a mount point there is no full path to build, so the
+ * drive-relative form stands in.
+ */
 function Location({ status, relative }: { status: VolumeStatus; relative: string }) {
   const path = fullPath(status, relative);
-  const name = volumeName(status);
-  const external = isExternal(status);
-  // With no mount point ever recorded there is no path to show, so the
-  // drive-relative form is all there is.
-  const primary = path ?? formatLocation(status, relative);
 
   return (
     <div className={DESTINATION_ENTRY}>
-      <div className="truncate" title={external ? `${primary} — ${name}` : primary}>
-        {primary}
-      </div>
-      {external && (
-        <div className="truncate text-[11px] text-fg-muted italic" title={name}>
-          {name}
-        </div>
-      )}
+      <DriveLocation
+        name={volumeName(status)}
+        path={path ?? formatLocation(status, relative)}
+        connected={status.mount_point !== null}
+      />
     </div>
   );
 }

@@ -111,6 +111,21 @@ describe("RuleTable", () => {
     expect(text).toContain("Archive");
   });
 
+  it("names the drive even when the platform calls it a fixed disk", () => {
+    // The bug this replaces a heuristic for. Windows reports DRIVE_REMOVABLE
+    // only when the *medium* comes out — flash sticks, card readers. A USB
+    // hard disk or SSD in an enclosure has fixed media inside a device you
+    // unplug, so it comes back DRIVE_FIXED, and gating the drive name on
+    // "removable" hid it for exactly the drives Shelv is for.
+    const rows = sampleRows();
+    for (const row of rows) {
+      for (const d of row.destinations) d.status.volume.drive_type = "fixed";
+    }
+
+    render(<RuleTable rows={rows} />);
+    expect(screen.getAllByText("Archive").length).toBeGreaterThan(0);
+  });
+
   it("renders the drive name in italics, not as part of the path", () => {
     render(<RuleTable rows={sampleRows()} />);
     const names = screen.getAllByText("Archive");
