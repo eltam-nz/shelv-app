@@ -46,6 +46,20 @@ impl AppState {
         }
     }
 
+    /// Runs one watcher tick against the store.
+    ///
+    /// Exposed so the background watcher can reuse the same lock discipline
+    /// as the commands rather than opening a second connection: two writers
+    /// to one `SQLite` file is a busy-timeout waiting to happen, and the
+    /// watcher writes whenever a drive is renamed.
+    pub fn poll_volumes(
+        &self,
+        watch: &mut shelv_core::watch::VolumeWatch,
+        now: i64,
+    ) -> Result<shelv_core::watch::Poll> {
+        self.with_store(|store| watch.poll(store, self.fs.as_ref(), now))
+    }
+
     /// Runs `f` against the store.
     ///
     /// A poisoned mutex means an earlier command panicked mid-write. The
@@ -312,7 +326,7 @@ fn refuse_if_unsafe(
 ///
 /// A clock before 1970 yields 0 rather than panicking; a wrong timestamp is
 /// a cosmetic problem, an aborted backup is not.
-fn now() -> i64 {
+pub fn now() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX))

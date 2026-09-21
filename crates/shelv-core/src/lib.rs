@@ -17,5 +17,6 @@ pub mod scheduler;
 pub mod store;
 pub mod view;
 pub mod volumes;
+pub mod watch;
 
 pub use error::{CoreError, Result};

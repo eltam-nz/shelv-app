@@ -58,7 +58,6 @@ function emptySpec(source: VolumePath): RuleSpec {
     source,
     layout: "mirror",
     packaging: "files",
-    allow_deletions: false,
     retention: { kind: "unlimited" },
     schedule: { kind: "manual" },
     run_on_connect: true,
@@ -495,17 +494,16 @@ export function RuleEditor({
                 hint="Run as soon as possible if the machine was off or the drive absent when it was due."
               />
 
-              {spec.layout === "mirror" && (
-                <Toggle
-                  checked={spec.allow_deletions}
-                  onChange={(v) => {
-                    update({ allow_deletions: v });
-                  }}
-                  label="Delete files from the backup when they are deleted from the source"
-                  hint="The only setting here that can destroy data. Off, the backup only ever grows. On, it tracks the source exactly — including removals."
-                  danger
-                />
-              )}
+              {/* Deletion is no longer a separate question: it follows from
+                  the layout. Stating what the chosen layout will do is still
+                  necessary, because "mirror" quietly includes removals and
+                  someone who has not thought it through deserves to be told
+                  before the first run rather than after it. */}
+              <p className="text-xs text-fg-muted">
+                {spec.layout === "mirror"
+                  ? "A mirror tracks the source exactly: files you delete from the source are removed from the backup too, into the recycle bin rather than erased."
+                  : "Snapshots are never modified once written. Nothing is deleted from a previous snapshot; whole old snapshots are removed only by the retention setting above."}
+              </p>
 
               <Field label="Ignore" hint="One pattern per line, e.g. *.tmp or Thumbs.db.">
                 <textarea
@@ -607,28 +605,23 @@ function Select({
   );
 }
 
+// The `danger` variant this once carried went with the deletion toggle. No
+// setting in the editor can destroy data any more — deletion follows from the
+// layout, which the copy beside it explains — so the styling went too rather
+// than sitting here unused waiting to be reached for.
 function Toggle({
   checked,
   onChange,
   label,
   hint,
-  danger,
 }: {
   checked: boolean;
   onChange: (value: boolean) => void;
   label: string;
   hint?: string;
-  danger?: boolean;
 }) {
   return (
-    <label
-      className="flex gap-2 rounded p-2"
-      style={
-        danger === true && checked
-          ? { backgroundColor: "var(--status-mismatch-fill)" }
-          : undefined
-      }
-    >
+    <label className="flex gap-2 rounded p-2">
       <input
         type="checkbox"
         checked={checked}
@@ -638,14 +631,7 @@ function Toggle({
         className="mt-0.5"
       />
       <span>
-        <span
-          className="block"
-          style={
-            danger === true && checked ? { color: "var(--status-mismatch)" } : undefined
-          }
-        >
-          {label}
-        </span>
+        <span className="block">{label}</span>
         {hint !== undefined && (
           <span className="block text-xs text-fg-muted">{hint}</span>
         )}

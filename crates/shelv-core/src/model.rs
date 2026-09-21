@@ -150,6 +150,29 @@ sql_enum! {
     }
 }
 
+impl Layout {
+    /// Whether a run may remove files the source no longer has.
+    ///
+    /// This follows from the layout rather than being asked separately. A
+    /// mirror that never deletes is not a mirror: it drifts from the source
+    /// with every run, so the one thing the user asked for stops happening,
+    /// silently. A snapshot is the opposite case — each folder records a
+    /// moment, and editing a past moment is not a backup.
+    ///
+    /// Deletion still means the recycle bin, via
+    /// [`PlatformFs::trash`](crate::platform::PlatformFs::trash), never an
+    /// unlink, so a mis-aimed mirror stays recoverable (`docs/PLAN.md` §4,
+    /// T4). Pruning old *snapshots* is a different operation, governed by
+    /// [`Retention`], and only ever removes whole snapshot folders.
+    #[must_use]
+    pub const fn deletes_extraneous(self) -> bool {
+        match self {
+            Self::Mirror => true,
+            Self::Snapshot => false,
+        }
+    }
+}
+
 sql_enum! {
     /// Whether files are copied as-is or packed into an archive.
     ///
@@ -392,11 +415,6 @@ pub struct RuleSpec {
     pub layout: Layout,
     /// Whether files are archived.
     pub packaging: Packaging,
-    /// Whether mirror mode may remove files absent from the source.
-    ///
-    /// Off by default, and the one setting that can destroy data
-    /// (`docs/PLAN.md` §4, T4).
-    pub allow_deletions: bool,
     /// How many snapshots to keep.
     pub retention: Retention,
     /// How often to run.
@@ -539,6 +557,14 @@ mod tests {
         check!(RunTrigger);
         check!(RunResult);
         check!(EventLevel);
+    }
+
+    #[test]
+    fn only_a_mirror_removes_files_the_source_no_longer_has() {
+        // The whole point of dropping `allow_deletions`: this is now decided
+        // by the layout, and a snapshot can never reach a previous snapshot.
+        assert!(Layout::Mirror.deletes_extraneous());
+        assert!(!Layout::Snapshot.deletes_extraneous());
     }
 
     #[test]

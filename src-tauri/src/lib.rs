@@ -5,6 +5,7 @@
 //! `docs/PLAN.md` §2.2.
 
 mod commands;
+mod watcher;
 
 use shelv_core::platform;
 use shelv_core::store::Store;
@@ -45,6 +46,12 @@ pub fn run() -> Result<(), StartupError> {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .manage(commands::AppState::new(store, fs))
+        .setup(|app| {
+            // Started here rather than before the builder so it can reach
+            // the managed state and the window it notifies.
+            watcher::spawn(app.handle());
+            Ok(())
+        })
         .invoke_handler(commands::handlers())
         .run(tauri::generate_context!())?;
 

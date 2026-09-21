@@ -143,6 +143,39 @@ impl Store {
             .map_err(store_err("could not read back the volume id"))
     }
 
+    /// Updates what is known about a volume that is already recorded.
+    ///
+    /// Deliberately not an upsert. [`upsert_volume`](Self::upsert_volume) is
+    /// reached only from the folder picker, which is the consent step that
+    /// lets a drive into Shelv at all (`docs/PLAN.md` §4.2). This is reached
+    /// from a timer, so if it could insert, plugging a drive in would enrol
+    /// it without anyone choosing anything. A row that is not there is
+    /// therefore left alone rather than created.
+    ///
+    /// The identity is never written: it is what says this *is* the same
+    /// volume, and a row whose identity could be rewritten in place would let
+    /// a rule silently change which disk it points at.
+    pub fn refresh_volume(&self, id: VolumeId, info: &VolumeInfo, last_seen_at: i64) -> Result<()> {
+        self.conn
+            .execute(
+                "UPDATE volume SET serial = ?2, label = ?3, filesystem = ?4, drive_type = ?5,
+                                   is_sync_root = ?6, last_mount = ?7, last_seen_at = ?8
+                 WHERE id = ?1",
+                rusqlite::params![
+                    id,
+                    info.serial,
+                    info.label,
+                    info.filesystem,
+                    drive_type_str(info.drive_type),
+                    i64::from(info.is_sync_root),
+                    path_to_db(&info.mount_point),
+                    last_seen_at,
+                ],
+            )
+            .map_err(store_err("could not refresh the volume"))?;
+        Ok(())
+    }
+
     /// Every volume Shelv has recorded, attached or not.
     pub fn volumes(&self) -> Result<Vec<StoredVolume>> {
         let mut stmt = self
@@ -271,10 +304,10 @@ impl Store {
         self.conn
             .execute(
                 "INSERT INTO rule (name, enabled, source_volume, source_rel, layout, packaging,
-                                   allow_deletions, retention_kind, retention_value, schedule,
+                                   retention_kind, retention_value, schedule,
                                    run_on_connect, catch_up, placeholders, hydrate_budget_bytes,
                                    follow_symlinks, excludes, created_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
                 rusqlite::params![
                     spec.name,
                     i64::from(spec.enabled),
@@ -282,7 +315,6 @@ impl Store {
                     path_to_db(&spec.source.relative),
                     spec.layout,
                     spec.packaging,
-                    i64::from(spec.allow_deletions),
                     retention_kind,
                     retention_value,
                     spec.schedule.to_db_string(),
@@ -309,10 +341,10 @@ impl Store {
             .conn
             .execute(
                 "UPDATE rule SET name = ?2, enabled = ?3, source_volume = ?4, source_rel = ?5,
-                                 layout = ?6, packaging = ?7, allow_deletions = ?8,
-                                 retention_kind = ?9, retention_value = ?10, schedule = ?11,
-                                 run_on_connect = ?12, catch_up = ?13, placeholders = ?14,
-                                 hydrate_budget_bytes = ?15, follow_symlinks = ?16, excludes = ?17
+                                 layout = ?6, packaging = ?7,
+                                 retention_kind = ?8, retention_value = ?9, schedule = ?10,
+                                 run_on_connect = ?11, catch_up = ?12, placeholders = ?13,
+                                 hydrate_budget_bytes = ?14, follow_symlinks = ?15, excludes = ?16
                  WHERE id = ?1",
                 rusqlite::params![
                     id,
@@ -322,7 +354,6 @@ impl Store {
                     path_to_db(&spec.source.relative),
                     spec.layout,
                     spec.packaging,
-                    i64::from(spec.allow_deletions),
                     retention_kind,
                     retention_value,
                     spec.schedule.to_db_string(),
@@ -568,7 +599,7 @@ impl Store {
 }
 
 const RULE_SELECT: &str = "SELECT id, name, enabled, source_volume, source_rel, layout, packaging,
-            allow_deletions, retention_kind, retention_value, schedule, run_on_connect,
+            retention_kind, retention_value, schedule, run_on_connect,
             catch_up, placeholders, hydrate_budget_bytes, follow_symlinks, excludes, created_at
      FROM rule";
 
@@ -665,10 +696,10 @@ fn read_volume(row: &Row<'_>) -> rusqlite::Result<StoredVolume> {
 /// Reads a rule row. The outer `rusqlite::Result` covers column access; the
 /// inner [`Result`] covers values `SQLite` accepted but the domain cannot.
 fn read_rule(row: &Row<'_>) -> rusqlite::Result<Result<Rule>> {
-    let schedule_text: String = row.get(10)?;
-    let excludes_text: String = row.get(16)?;
-    let retention_kind: Option<String> = row.get(8)?;
-    let retention_value: Option<u32> = row.get(9)?;
+    let schedule_text: String = row.get(9)?;
+    let excludes_text: String = row.get(15)?;
+    let retention_kind: Option<String> = row.get(7)?;
+    let retention_value: Option<u32> = row.get(8)?;
 
     let Some(schedule) = Schedule::from_db_str(&schedule_text) else {
         return Ok(Err(CoreError::Store(format!(
@@ -686,7 +717,7 @@ fn read_rule(row: &Row<'_>) -> rusqlite::Result<Result<Rule>> {
 
     Ok(Ok(Rule {
         id: row.get(0)?,
-        created_at: row.get(17)?,
+        created_at: row.get(16)?,
         spec: RuleSpec {
             name: row.get(1)?,
             enabled: row.get::<_, i64>(2)? != 0,
@@ -696,14 +727,13 @@ fn read_rule(row: &Row<'_>) -> rusqlite::Result<Result<Rule>> {
             },
             layout: row.get::<_, Layout>(5)?,
             packaging: row.get::<_, Packaging>(6)?,
-            allow_deletions: row.get::<_, i64>(7)? != 0,
             retention: Retention::from_columns(retention_kind.as_deref(), retention_value),
             schedule,
-            run_on_connect: row.get::<_, i64>(11)? != 0,
-            catch_up: row.get::<_, i64>(12)? != 0,
-            placeholders: row.get::<_, PlaceholderPolicy>(13)?,
-            hydrate_budget_bytes: row.get::<_, Option<i64>>(14)?.map(as_u64),
-            follow_symlinks: row.get::<_, i64>(15)? != 0,
+            run_on_connect: row.get::<_, i64>(10)? != 0,
+            catch_up: row.get::<_, i64>(11)? != 0,
+            placeholders: row.get::<_, PlaceholderPolicy>(12)?,
+            hydrate_budget_bytes: row.get::<_, Option<i64>>(13)?.map(as_u64),
+            follow_symlinks: row.get::<_, i64>(14)? != 0,
             excludes,
         },
     }))

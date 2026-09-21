@@ -13,6 +13,7 @@
  */
 
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 
 import type {
   CoreError,
@@ -191,3 +192,16 @@ export const listVolumes = (): Promise<VolumeStatus[]> =>
 /** A rule's run history, newest first. */
 export const listRuns = (rule: RuleId, limit: number): Promise<Run[]> =>
   call<Run[]>("list_runs", { rule, limit });
+
+/**
+ * Runs `onChange` whenever the set of attached drives changes.
+ *
+ * The backend polls and emits only on a real change (see
+ * `shelv_core::watch`), so this fires when a drive is plugged in, pulled out
+ * or renamed, and not once a second. Resolves to an unlisten function.
+ */
+export async function onVolumesChanged(onChange: () => void): Promise<() => void> {
+  return listen("shelv://volumes-changed", () => {
+    onChange();
+  });
+}

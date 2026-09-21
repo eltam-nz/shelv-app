@@ -51,6 +51,7 @@ a concrete implementation. `scripts/check-platform-boundary.sh` fails CI if the
 | `scheduler/` | Cron evaluation, catch-up, run-on-connect, the run queue. **M3.** |
 | `safety/` | Path canonicalisation and the destructive-operation guards. **M1.** |
 | `volumes/` | Volume tracking and identity verification. **M1.** |
+| `watch/` | Notices that the set of attached drives has changed, and reports it only when it really has. |
 
 ## Volume identity
 
@@ -77,6 +78,22 @@ suggest, because they need different words and different actions:
 | `Refused` | Attached, but a network share, optical media or unclassifiable. Plugging in does not help. |
 | `IdentityMismatch` | Something *is* mounted where this destination used to be, but it is a different volume. Never written to. |
 | `Unverifiable` | Attached and of a permitted type, but the system reports nothing that identifies it across reconnections. Cannot be told apart from a different drive in the same place, so never written to. |
+
+Availability is re-evaluated once a second by a background thread in the Tauri
+shell, which emits `shelv://volumes-changed` to the window only when the
+result differs from the previous poll — so the table follows a drive being
+plugged in within a second without re-rendering the rest of the time.
+
+`WM_DEVICECHANGE` is the better primitive and is not used: it is Windows-only,
+needs a subclassed window procedure and therefore `unsafe` outside the
+platform boundary, and cannot be exercised on any other host. Swapping the
+timer for it later means calling `VolumeWatch::poll` from that event instead
+of from a tick; nothing else moves.
+
+Each poll also re-reads the live label, filesystem and drive type of every
+attached volume and overlays them on what is stored, so a drive renamed in
+Explorer shows its new name immediately. The write-back is update-only: a
+volume enters the database by being picked, never by being attached.
 
 `IdentityMismatch` is the dangerous case. Collapsing it into "unavailable"
 would read as "unplugged" and hide the situation that can destroy data, so it

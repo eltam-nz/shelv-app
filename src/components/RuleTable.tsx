@@ -5,12 +5,22 @@ import {
   getSortedRowModel,
   useReactTable,
   type SortingState,
+  type VisibilityState,
 } from "@tanstack/react-table";
 import { useMemo, useState } from "react";
 
 import { tagStyle } from "../lib/palette";
-import { formatLocation } from "../lib/volumes";
-import type { Layout, Packaging, RuleRow, Schedule, TagId } from "../types";
+import { formatLocation, fullPath, isExternal, volumeName } from "../lib/volumes";
+import type {
+  Layout,
+  Packaging,
+  PlaceholderPolicy,
+  Retention,
+  RuleRow,
+  Schedule,
+  TagId,
+  VolumeStatus,
+} from "../types";
 import { AvailabilityPill, RunResultPill } from "./StatusPill";
 
 declare module "@tanstack/react-table" {
@@ -29,6 +39,40 @@ declare module "@tanstack/react-table" {
  * whether the backup worked (docs/PLAN.md §1.1e), and a source availability
  * indicator, because a rule whose *source* drive is missing cannot run either.
  */
+
+/** How much of a rule's configuration the table shows. */
+export type ViewMode = "simple" | "detailed";
+
+/**
+ * Columns hidden in the simple view.
+ *
+ * These three are the ones you set once and then stop thinking about, so in
+ * day-to-day use they are width spent on nothing. Everything the simple view
+ * keeps answers "is my data safe right now?" — where it goes, whether the
+ * drive is there, whether the last run worked.
+ */
+const CONFIGURATION_COLUMNS = ["layout", "packaging", "schedule"];
+
+/** Columns only the detailed view shows: the rest of the rule's settings. */
+const DETAIL_COLUMNS = [
+  "placeholders",
+  "run_on_connect",
+  "catch_up",
+  "retention",
+  "follow_symlinks",
+  "excludes",
+];
+
+/** Which columns each view shows. */
+function columnVisibility(view: ViewMode): VisibilityState {
+  const hidden =
+    view === "simple" ? [...CONFIGURATION_COLUMNS, ...DETAIL_COLUMNS] : DETAIL_COLUMNS;
+  const visible = view === "detailed" ? DETAIL_COLUMNS : [];
+  return Object.fromEntries([
+    ...hidden.map((id) => [id, false] as const),
+    ...visible.map((id) => [id, true] as const),
+  ]);
+}
 
 const columnHelper = createColumnHelper<RuleRow>();
 
@@ -72,9 +116,66 @@ function formatPackaging(packaging: Packaging): string {
   }
 }
 
-/** A rule's source, as `Drive · relative/path`. */
-function sourceLocation(row: RuleRow): string {
-  return formatLocation(row.source, row.rule.spec.source.relative);
+function formatPlaceholders(policy: PlaceholderPolicy): string {
+  switch (policy) {
+    case "hydrate":
+      return "Download";
+    case "hydrate_release":
+      return "Download & release";
+    case "skip":
+      return "Skip";
+  }
+}
+
+function formatRetention(retention: Retention): string {
+  switch (retention.kind) {
+    case "unlimited":
+      return "All";
+    case "keep_last_n":
+      return `Last ${String(retention.value)}`;
+    case "keep_days":
+      return `${String(retention.value)} days`;
+  }
+}
+
+function yesNo(value: boolean): string {
+  return value ? "Yes" : "No";
+}
+
+/**
+ * One stored location: the path on its own line, and for a drive that gets
+ * unplugged, the drive's name in italics beneath it.
+ *
+ * Both lines are needed for an external drive and only one for an internal
+ * one. `D:\Backups` identifies a folder on a fixed disk completely, but on a
+ * removable drive the letter is assigned by Windows and belongs to whichever
+ * disk was plugged in first, so the path alone does not say which physical
+ * drive a backup is on — which is the question someone with three USB drives
+ * in a drawer is actually asking. The name is re-read on every availability
+ * check, so renaming a drive shows up here rather than staying stale.
+ */
+const DESTINATION_ENTRY = "flex min-h-9 flex-col justify-center";
+
+function Location({ status, relative }: { status: VolumeStatus; relative: string }) {
+  const path = fullPath(status, relative);
+  const name = volumeName(status);
+  const external = isExternal(status);
+  // With no mount point ever recorded there is no path to show, so the
+  // drive-relative form is all there is.
+  const primary = path ?? formatLocation(status, relative);
+
+  return (
+    <div className={DESTINATION_ENTRY}>
+      <div className="truncate" title={external ? `${primary} — ${name}` : primary}>
+        {primary}
+      </div>
+      {external && (
+        <div className="truncate text-[11px] text-fg-muted italic" title={name}>
+          {name}
+        </div>
+      )}
+    </div>
+  );
 }
 
 const columns = [
@@ -113,13 +214,13 @@ const columns = [
   columnHelper.accessor((row) => row.rule.spec.source.relative, {
     id: "source",
     header: "Source",
-    size: 165,
+    size: 250,
     cell: (ctx) => {
       const row = ctx.row.original;
       return (
-        <span className="flex items-center gap-2">
-          <span className="truncate" title={sourceLocation(row)}>
-            {sourceLocation(row)}
+        <span className="flex items-start gap-2">
+          <span className="min-w-0 flex-1">
+            <Location status={row.source} relative={row.rule.spec.source.relative} />
           </span>
           {/* A missing source is as blocking as a missing destination, and the
               mock-up has nowhere to show it. Flag it inline rather than
@@ -135,22 +236,20 @@ const columns = [
   columnHelper.display({
     id: "destinations",
     header: "Destination",
-    size: 165,
+    size: 250,
     cell: (ctx) => {
       const { destinations } = ctx.row.original;
       if (destinations.length === 0) {
         return <span className="text-fg-muted">No destination</span>;
       }
       return (
-        <div className="space-y-0.5">
+        <div>
           {destinations.map((d) => (
-            <div
+            <Location
               key={d.destination.id}
-              className="truncate"
-              title={formatLocation(d.status, d.destination.path.relative)}
-            >
-              {formatLocation(d.status, d.destination.path.relative)}
-            </div>
+              status={d.status}
+              relative={d.destination.path.relative}
+            />
           ))}
         </div>
       );
@@ -165,9 +264,9 @@ const columns = [
       const { destinations } = ctx.row.original;
       if (destinations.length === 0) return <span className="text-fg-muted">—</span>;
       return (
-        <div className="space-y-0.5">
+        <div>
           {destinations.map((d) => (
-            <div key={d.destination.id}>
+            <div key={d.destination.id} className={DESTINATION_ENTRY}>
               <AvailabilityPill availability={d.status.availability} />
             </div>
           ))}
@@ -194,6 +293,70 @@ const columns = [
     id: "schedule",
     header: "Frequency",
     size: 90,
+  }),
+
+  columnHelper.accessor((row) => row.rule.spec.placeholders, {
+    id: "placeholders",
+    header: "Cloud",
+    size: 130,
+    cell: (ctx) => {
+      const { spec } = ctx.row.original.rule;
+      const budget = spec.hydrate_budget_bytes;
+      return (
+        <span
+          title={
+            budget === null
+              ? undefined
+              : `At most ${String(Math.round(budget / 1_000_000))} MB downloaded per run`
+          }
+        >
+          {formatPlaceholders(ctx.getValue())}
+          {budget !== null && " *"}
+        </span>
+      );
+    },
+  }),
+
+  columnHelper.accessor((row) => row.rule.spec.run_on_connect, {
+    id: "run_on_connect",
+    header: "On connect",
+    size: 90,
+    cell: (ctx) => yesNo(ctx.getValue()),
+  }),
+
+  columnHelper.accessor((row) => row.rule.spec.catch_up, {
+    id: "catch_up",
+    header: "Catch up",
+    size: 80,
+    cell: (ctx) => yesNo(ctx.getValue()),
+  }),
+
+  columnHelper.accessor((row) => formatRetention(row.rule.spec.retention), {
+    id: "retention",
+    header: "Keep",
+    size: 80,
+  }),
+
+  columnHelper.accessor((row) => row.rule.spec.follow_symlinks, {
+    id: "follow_symlinks",
+    header: "Links",
+    size: 70,
+    cell: (ctx) => yesNo(ctx.getValue()),
+  }),
+
+  columnHelper.accessor((row) => row.rule.spec.excludes.length, {
+    id: "excludes",
+    header: "Ignore",
+    size: 80,
+    cell: (ctx) => {
+      const count = ctx.getValue();
+      if (count === 0) return <span className="text-fg-muted">—</span>;
+      return (
+        <span title={ctx.row.original.rule.spec.excludes.join("\n")}>
+          {count} {count === 1 ? "pattern" : "patterns"}
+        </span>
+      );
+    },
   }),
 
   columnHelper.accessor((row) => row.last_run?.result ?? null, {
@@ -227,7 +390,7 @@ const columns = [
     header: "",
     size: 155,
     cell: (ctx) => (
-      <div className="flex gap-3 text-xs whitespace-nowrap">
+      <div className="flex flex-col items-start gap-1 text-xs whitespace-nowrap">
         {/* Always disabled: the engine lands in M1 and nothing copies files
             yet. A button that looks operational and silently does nothing is
             worse than no button in a backup tool — it invites someone to
@@ -274,15 +437,35 @@ function isRunnable(row: RuleRow): boolean {
   );
 }
 
+/**
+ * The actions column is pinned to the right edge.
+ *
+ * It has to stay reachable and stay beside its own row. Rendering it as a
+ * separate element next to the table would satisfy the first and break the
+ * second: rows are not a fixed height — a rule with three destinations is
+ * three times as tall as one with a single destination — so two independent
+ * lists would have to have their heights measured and copied across on every
+ * change, and would drift whenever that measurement lagged a render.
+ *
+ * A sticky cell inside the same row is the same thing without the drift. It
+ * is aligned by construction because it *is* the row, and it still detaches
+ * visually and stays put while the rest of the table scrolls underneath —
+ * which it does, since the detailed view is far wider than any window.
+ */
+const STICKY_CELL = "sticky right-0 z-20 border-l border-border-strong";
+
 export function RuleTable({
   rows,
   tagFilter,
+  view = "simple",
   onEdit,
   onCreate,
 }: {
   rows: RuleRow[];
   /** Show only rules carrying every one of these tags. Empty shows all. */
   tagFilter?: TagId[];
+  /** How much of each rule's configuration to show. */
+  view?: ViewMode;
   /** Open the editor for a rule. */
   onEdit?: (row: RuleRow) => void;
   /** Start a new rule, offered from the empty state. */
@@ -298,6 +481,8 @@ export function RuleTable({
     });
   }, [rows, tagFilter]);
 
+  const visibility = useMemo(() => columnVisibility(view), [view]);
+
   // React Compiler cannot analyse TanStack's hook and skips optimising this
   // component. That is expected and harmless — the table memoises internally
   // — but it is suppressed explicitly so CI can run at zero warnings.
@@ -305,7 +490,7 @@ export function RuleTable({
   const table = useReactTable({
     data: filtered,
     columns,
-    state: { sorting },
+    state: { sorting, columnVisibility: visibility },
     onSortingChange: setSorting,
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
@@ -344,13 +529,20 @@ export function RuleTable({
   }
 
   return (
-    <table className="w-full min-w-[1455px] table-fixed border-collapse text-left text-[13px]">
-      <thead className="sticky top-0 z-10 bg-surface">
+    // `border-separate` rather than `border-collapse`: a collapsed border is
+    // owned by the table, not the cell, so it does not travel with a sticky
+    // cell and the pinned column loses its edge as soon as you scroll.
+    <table
+      className="w-full table-fixed border-separate border-spacing-0 text-left text-[13px]"
+      style={{ minWidth: `${String(table.getTotalSize())}px` }}
+    >
+      <thead>
         {table.getHeaderGroups().map((group) => (
-          <tr key={group.id} className="border-b border-border">
+          <tr key={group.id}>
             {group.headers.map((header) => {
               const sortable = header.column.getCanSort();
               const direction = header.column.getIsSorted();
+              const pinned = header.column.id === "actions";
               return (
                 <th
                   key={header.id}
@@ -363,7 +555,9 @@ export function RuleTable({
                         ? "descending"
                         : undefined
                   }
-                  className="px-3 py-2 text-xs font-medium tracking-wide text-fg-muted uppercase"
+                  className={`sticky top-0 z-10 border-b border-border bg-bg px-3 py-2 text-xs font-medium tracking-wide text-fg-muted uppercase ${
+                    pinned ? `${STICKY_CELL} z-30` : ""
+                  }`}
                 >
                   {sortable ? (
                     <button
@@ -387,12 +581,23 @@ export function RuleTable({
       </thead>
       <tbody>
         {table.getRowModel().rows.map((row) => (
-          <tr key={row.id} className="border-b border-border hover:bg-surface">
-            {row.getVisibleCells().map((cell) => (
-              <td key={cell.id} className="overflow-hidden px-3 py-2 align-top">
-                {flexRender(cell.column.columnDef.cell, cell.getContext())}
-              </td>
-            ))}
+          // The pinned cell needs its own background so the rest of the row
+          // scrolls under it rather than through it, and `group` is what
+          // lets that background follow the row's hover state.
+          <tr key={row.id} className="group">
+            {row.getVisibleCells().map((cell) => {
+              const pinned = cell.column.id === "actions";
+              return (
+                <td
+                  key={cell.id}
+                  className={`overflow-hidden border-b border-border bg-bg px-3 py-2 align-top group-hover:bg-surface ${
+                    pinned ? STICKY_CELL : ""
+                  }`}
+                >
+                  {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                </td>
+              );
+            })}
           </tr>
         ))}
       </tbody>

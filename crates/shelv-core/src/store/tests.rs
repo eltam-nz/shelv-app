@@ -42,7 +42,6 @@ fn sample_spec(source: VolumeId) -> RuleSpec {
         },
         layout: Layout::Snapshot,
         packaging: Packaging::ZipDeflate,
-        allow_deletions: false,
         retention: Retention::KeepLastN(6),
         schedule: Schedule::Monthly,
         run_on_connect: true,
@@ -98,7 +97,7 @@ fn updating_a_rule_keeps_its_id_and_creation_time() {
     changed.name = "Lightroom Catalog (weekly)".to_owned();
     changed.schedule = Schedule::Cron("0 3 * * 1".to_owned());
     changed.retention = Retention::KeepDays(30);
-    changed.allow_deletions = true;
+    changed.layout = Layout::Snapshot;
     changed.excludes.clear();
     store.update_rule(id, &changed).unwrap();
 

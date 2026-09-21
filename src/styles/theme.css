@@ -66,7 +66,7 @@
   /* Layout. */
   --radius: 6px;
   --radius-sm: 4px;
-  --header-height: 52px;
+  --header-height: 64px;
   --statusbar-height: 28px;
 
   color-scheme: dark;

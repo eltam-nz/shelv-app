@@ -23,7 +23,7 @@ export function AppShell({
         className="flex shrink-0 items-center justify-between border-b border-border px-4"
         style={{ height: "var(--header-height)" }}
       >
-        <h1 className="text-sm font-semibold tracking-wide">{title}</h1>
+        <h1 className="text-xl font-semibold tracking-tight">{title}</h1>
         <div className="flex items-center gap-2">{actions}</div>
       </header>
 

@@ -2,9 +2,9 @@ import { useCallback, useEffect, useState } from "react";
 
 import { AppShell } from "./components/AppShell";
 import { RuleEditor } from "./components/RuleEditor";
-import { RuleTable } from "./components/RuleTable";
+import { RuleTable, type ViewMode } from "./components/RuleTable";
 import { TagManager } from "./components/TagManager";
-import { deleteRule, listRules, listTags, ShelvError } from "./lib/ipc";
+import { deleteRule, listRules, listTags, onVolumesChanged, ShelvError } from "./lib/ipc";
 import { tagStyle } from "./lib/palette";
 import type { RuleRow, Tag, TagId } from "./types";
 
@@ -20,6 +20,7 @@ export function App() {
   const [tags, setTags] = useState<Tag[]>([]);
   const [filter, setFilter] = useState<TagId[]>([]);
   const [panel, setPanel] = useState<Panel>({ kind: "none" });
+  const [view, setView] = useState<ViewMode>("simple");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -41,6 +42,29 @@ export function App() {
       await refresh();
     };
     void load();
+  }, [refresh]);
+
+  // Plugging a drive in or pulling one out changes which rules can run, so
+  // the table has to follow it. The backend only emits when something really
+  // changed, so this is not a once-a-second re-render.
+  useEffect(() => {
+    let stop: (() => void) | null = null;
+    let cancelled = false;
+
+    void onVolumesChanged(() => {
+      void refresh();
+    }).then((unlisten) => {
+      // The component can unmount before the listener is registered. Tear it
+      // straight down in that case, or it outlives the component and keeps
+      // calling refresh on a dead tree.
+      if (cancelled) unlisten();
+      else stop = unlisten;
+    });
+
+    return () => {
+      cancelled = true;
+      stop?.();
+    };
   }, [refresh]);
 
   const close = () => {
@@ -69,7 +93,7 @@ export function App() {
   return (
     <>
       <AppShell
-        title="Shelv"
+        title="Shelv — Backup Manager"
         actions={
           <div className="flex items-center gap-3">
             {tags.length > 0 && (
@@ -104,6 +128,7 @@ export function App() {
                 })}
               </div>
             )}
+            <ViewToggle view={view} onChange={setView} />
             <button
               type="button"
               onClick={() => {
@@ -147,6 +172,7 @@ export function App() {
           <RuleTable
             rows={rows}
             tagFilter={filter}
+            view={view}
             onEdit={(row) => {
               setPanel({ kind: "edit-rule", row });
             }}
@@ -188,6 +214,68 @@ export function App() {
         />
       )}
     </>
+  );
+}
+
+/**
+ * Switches between the everyday view and the full one.
+ *
+ * A segmented control rather than a checkbox: both states are named, so the
+ * one you are not in is as legible as the one you are, and neither reads as
+ * "off".
+ */
+function ViewToggle({
+  view,
+  onChange,
+}: {
+  view: ViewMode;
+  onChange: (view: ViewMode) => void;
+}) {
+  const options: { value: ViewMode; label: string; hint: string }[] = [
+    {
+      value: "simple",
+      label: "Simple",
+      hint: "Where each backup goes and whether it is working",
+    },
+    {
+      value: "detailed",
+      label: "Detailed",
+      hint: "Every setting on every rule, side by side",
+    },
+  ];
+
+  return (
+    <div
+      role="group"
+      aria-label="Table detail"
+      className="flex overflow-hidden rounded border border-border text-xs"
+    >
+      {options.map((option) => {
+        const active = view === option.value;
+        return (
+          <button
+            key={option.value}
+            type="button"
+            aria-pressed={active}
+            title={option.hint}
+            onClick={() => {
+              onChange(option.value);
+            }}
+            className="px-2.5 py-1"
+            style={
+              active
+                ? {
+                    color: "var(--accent-blue)",
+                    backgroundColor: "var(--accent-blue-fill)",
+                  }
+                : { color: "var(--fg-muted)" }
+            }
+          >
+            {option.label}
+          </button>
+        );
+      })}
+    </div>
   );
 }
 

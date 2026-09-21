@@ -26,7 +26,7 @@ use shelv_core::platform::{
 };
 use shelv_core::safety::{check_rule, RuleProblem};
 use shelv_core::store::Store;
-use shelv_core::view::{rule_rows, Availability};
+use shelv_core::view::{refresh_stored_volumes, rule_rows, Availability};
 use shelv_core::volumes::resolve_picked_folder;
 use shelv_core::{CoreError, Result};
 
@@ -101,7 +101,6 @@ fn spec(name: &str, source: VolumePath) -> RuleSpec {
         source,
         layout: Layout::Mirror,
         packaging: Packaging::Files,
-        allow_deletions: false,
         retention: Retention::Unlimited,
         schedule: Schedule::Weekly,
         run_on_connect: true,
@@ -297,4 +296,67 @@ fn picking_a_folder_on_a_refused_drive_never_reaches_rule_creation() {
 
     // And it leaves nothing behind that a later rule could reference.
     assert!(store.volumes().unwrap().is_empty());
+}
+
+#[test]
+fn renaming_a_drive_updates_the_stored_name_without_enrolling_new_drives() {
+    let store = Store::open_in_memory().unwrap();
+    let fs = system_and_backup();
+
+    let source = resolve_picked_folder(&store, &fs, Path::new("/root/Pictures"), 1000).unwrap();
+    let destination =
+        resolve_picked_folder(&store, &fs, Path::new("/media/backup/Backups"), 1000).unwrap();
+    let rule = store
+        .create_rule(&spec("Photos", source.path), 1000)
+        .unwrap();
+    store.add_destination(rule, &destination.path, 0).unwrap();
+    assert_eq!(store.volumes().unwrap().len(), 2);
+
+    // The user renames the backup drive, and plugs in a third drive they
+    // have never picked a folder on.
+    let mut renamed = volume("/media/backup", "Backup Drive", DriveType::Removable);
+    renamed.label = Some("Archive 2026".to_owned());
+    let stranger = volume("/media/usb", "Someone Else", DriveType::Removable);
+    let after = StubFs {
+        volumes: vec![volume("/", "System", DriveType::Fixed), renamed, stranger],
+    };
+
+    assert_eq!(refresh_stored_volumes(&store, &after, 2000).unwrap(), 1);
+
+    // The rename is persisted...
+    let stored_names: Vec<_> = store
+        .volumes()
+        .unwrap()
+        .into_iter()
+        .filter_map(|v| v.label)
+        .collect();
+    assert!(
+        stored_names.contains(&"Archive 2026".to_owned()),
+        "{stored_names:?}"
+    );
+
+    // ...and the drive nobody picked a folder on is still not in Shelv.
+    // Attaching a drive must never be what enrols it.
+    assert_eq!(store.volumes().unwrap().len(), 2);
+    assert!(!stored_names.contains(&"Someone Else".to_owned()));
+
+    // A second pass with nothing changed writes nothing.
+    assert_eq!(refresh_stored_volumes(&store, &after, 3000).unwrap(), 0);
+
+    // And the table shows the new name.
+    let row = rule_rows(&store, &after)
+        .unwrap()
+        .into_iter()
+        .next()
+        .unwrap();
+    assert_eq!(
+        row.destinations
+            .first()
+            .unwrap()
+            .status
+            .volume
+            .label
+            .as_deref(),
+        Some("Archive 2026")
+    );
 }

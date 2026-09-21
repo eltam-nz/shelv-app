@@ -34,13 +34,6 @@ layout: Layout,
  */
 packaging: Packaging, 
 /**
- * Whether mirror mode may remove files absent from the source.
- *
- * Off by default, and the one setting that can destroy data
- * (`docs/PLAN.md` §4, T4).
- */
-allow_deletions: boolean, 
-/**
  * How many snapshots to keep.
  */
 retention: Retention, 

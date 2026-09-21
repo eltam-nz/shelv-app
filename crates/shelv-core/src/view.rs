@@ -150,11 +150,63 @@ fn classify(volume: StoredVolume, attached: &[crate::platform::VolumeInfo]) -> V
         Availability::Refused
     };
 
+    // What the drive says about itself *now* beats what was recorded when a
+    // folder was last picked on it. A drive renamed in Explorer, reformatted
+    // to a different filesystem, or moved from a USB caddy into a bay is
+    // still the same volume — the identity says so — but the stored label,
+    // filesystem and drive type are all now wrong, and the label is the name
+    // the table puts in front of the user. Rows would keep showing the old
+    // name until the user happened to pick another folder on that drive.
+    //
+    // Persisting the change is a separate matter, handled by the caller
+    // (`refresh_stored_volumes`), because classification must stay a pure
+    // function the UI can call as often as it likes.
     VolumeStatus {
         availability,
         mount_point: Some(live.mount_point.clone()),
-        volume,
+        volume: StoredVolume {
+            label: live.label.clone(),
+            filesystem: live.filesystem.clone(),
+            drive_type: live.drive_type,
+            serial: live.serial.clone(),
+            is_sync_root: live.is_sync_root,
+            last_mount: Some(live.mount_point.clone()),
+            ..volume
+        },
     }
+}
+
+/// Writes back any volume whose live details differ from what is recorded.
+///
+/// Only ever an update. A volume enters the database by being picked
+/// (`docs/PLAN.md` §4.2) and nothing here may add one, or merely attaching a
+/// drive would register it — which is exactly the thing picking exists to
+/// gate.
+///
+/// Returns how many rows changed, so a caller that runs on a timer can log
+/// or skip on zero rather than writing every tick.
+pub fn refresh_stored_volumes(store: &Store, fs: &dyn PlatformFs, now: i64) -> Result<usize> {
+    let attached = fs.volumes()?;
+    let mut changed = 0;
+
+    for recorded in store.volumes()? {
+        let Some(live) = attached.iter().find(|a| a.identity == recorded.identity) else {
+            continue;
+        };
+        let differs = recorded.label != live.label
+            || recorded.filesystem != live.filesystem
+            || recorded.drive_type != live.drive_type
+            || recorded.serial != live.serial
+            || recorded.is_sync_root != live.is_sync_root
+            || recorded.last_mount.as_ref() != Some(&live.mount_point);
+        if !differs {
+            continue;
+        }
+        store.refresh_volume(recorded.id, live, now)?;
+        changed += 1;
+    }
+
+    Ok(changed)
 }
 
 /// Builds every row of the rule table.
@@ -269,6 +321,26 @@ mod tests {
         assert_eq!(status.availability, Availability::Available);
         assert_eq!(status.mount_point, Some(PathBuf::from("E:\\")));
         assert!(status.availability.is_writable());
+    }
+
+    #[test]
+    fn a_renamed_drive_reports_its_new_name_immediately() {
+        // Renaming a drive in Explorer must not leave the table showing the
+        // old name until the user happens to pick another folder on it.
+        let mut live = info("vol-a", "E:\\", DriveType::Removable);
+        live.label = Some("Photos 2026".to_owned());
+
+        let status = classify(stored(1, "vol-a", Some("E:\\")), &[live]);
+        assert_eq!(status.volume.label.as_deref(), Some("Photos 2026"));
+    }
+
+    #[test]
+    fn a_disconnected_drive_keeps_the_last_name_it_was_seen_under() {
+        // There is nothing live to read a name from, and "Unnamed" would be
+        // a worse answer than the name the user last saw.
+        let status = classify(stored(1, "vol-a", Some("E:\\")), &[]);
+        assert_eq!(status.availability, Availability::Disconnected);
+        assert_eq!(status.volume.label.as_deref(), Some("Backup"));
     }
 
     #[test]

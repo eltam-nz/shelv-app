@@ -21,14 +21,21 @@ struct Migration {
 }
 
 /// Every migration, in order.
-const MIGRATIONS: &[Migration] = &[Migration {
-    version: 1,
-    name: "initial schema",
-    sql: include_str!("../../migrations/0001_initial.sql"),
-}];
+const MIGRATIONS: &[Migration] = &[
+    Migration {
+        version: 1,
+        name: "initial schema",
+        sql: include_str!("../../migrations/0001_initial.sql"),
+    },
+    Migration {
+        version: 2,
+        name: "layout implies deletions",
+        sql: include_str!("../../migrations/0002_layout_implies_deletions.sql"),
+    },
+];
 
 /// The schema version this build expects.
-pub const LATEST_VERSION: i64 = 1;
+pub const LATEST_VERSION: i64 = 2;
 
 /// Applies any migrations the database has not yet seen.
 ///
@@ -114,6 +121,46 @@ mod tests {
         assert_eq!(migrate(&mut conn).unwrap(), LATEST_VERSION);
         // Running again must be a no-op rather than re-applying DDL.
         assert_eq!(migrate(&mut conn).unwrap(), LATEST_VERSION);
+    }
+
+    #[test]
+    fn an_existing_v1_database_upgrades_in_place() {
+        // The upgrade path real users take, and the one no fresh-install
+        // test exercises: v1 shipped, so a database already carrying
+        // `allow_deletions` has to survive the column being dropped with its
+        // rules intact. It also pins that the bundled SQLite is new enough
+        // for ALTER TABLE ... DROP COLUMN (3.35+).
+        let mut conn = Connection::open_in_memory().unwrap();
+        apply_only_v1(&mut conn);
+        conn.execute_batch(
+            "INSERT INTO volume (identity_kind, identity, drive_type)
+             VALUES ('linux_fs_uuid', 'uuid-1', 'removable');
+             INSERT INTO rule (name, source_volume, source_rel, layout, packaging,
+                               allow_deletions, schedule, created_at)
+             VALUES ('Photos', 1, 'Pictures', 'mirror', 'files', 1, 'weekly', 1000);",
+        )
+        .unwrap();
+
+        assert_eq!(migrate(&mut conn).unwrap(), LATEST_VERSION);
+
+        let name: String = conn
+            .query_row("SELECT name FROM rule", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(name, "Photos", "the rule must survive the migration");
+        assert!(
+            conn.query_row("SELECT allow_deletions FROM rule", [], |row| row
+                .get::<_, i64>(0))
+                .is_err(),
+            "the column should be gone"
+        );
+    }
+
+    /// Brings a connection to schema v1 only, as a shipped v1 build left it.
+    fn apply_only_v1(conn: &mut Connection) {
+        let first = MIGRATIONS.first().unwrap();
+        let tx = conn.transaction().unwrap();
+        apply(&tx, first).unwrap();
+        tx.commit().unwrap();
     }
 
     #[test]
