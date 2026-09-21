@@ -18,6 +18,7 @@ import { listen } from "@tauri-apps/api/event";
 import type {
   CoreError,
   DestinationId,
+  DriveRow,
   PickedFolder,
   Rule,
   RuleId,
@@ -27,6 +28,7 @@ import type {
   Run,
   Tag,
   TagId,
+  VolumeId,
   VolumePath,
   VolumeStatus,
 } from "../types";
@@ -188,6 +190,33 @@ export const setRuleTags = (rule: RuleId, tags: TagId[]): Promise<void> =>
 /** Every known volume, and whether it can be written to right now. */
 export const listVolumes = (): Promise<VolumeStatus[]> =>
   call<VolumeStatus[]>("list_volumes");
+
+/**
+ * Every drive Shelv has recorded, with its status and how many rules use it.
+ *
+ * Recorded drives only. A drive is added by picking a folder on it through
+ * `pickFolder`, which is the operating system's own consent step, so this
+ * never enumerates the user's attached hardware.
+ */
+export const listDrives = (): Promise<DriveRow[]> => call<DriveRow[]>("list_drives");
+
+/**
+ * Sets or clears the name the user gave a drive.
+ *
+ * Display only. Nothing resolves or writes on a nickname — the volume
+ * identity remains the only key anything is matched by.
+ */
+export const setDriveNickname = (id: VolumeId, nickname: string | null): Promise<void> =>
+  callVoid("set_drive_nickname", { id, nickname });
+
+/**
+ * Removes Shelv's record of a drive.
+ *
+ * Rejects with a `refused` error while any rule still points at it. Nothing
+ * on the drive itself is touched.
+ */
+export const forgetDrive = (id: VolumeId): Promise<void> =>
+  callVoid("forget_drive", { id });
 
 /** A rule's run history, newest first. */
 export const listRuns = (rule: RuleId, limit: number): Promise<Run[]> =>

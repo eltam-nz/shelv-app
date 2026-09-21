@@ -38,6 +38,7 @@ function volume(label: string, value: string): StoredVolume {
     identity: { kind: "windows_volume_guid", value },
     serial: "A1B2C3D4",
     label,
+    nickname: null,
     filesystem: "NTFS",
     drive_type: "removable",
     is_sync_root: false,

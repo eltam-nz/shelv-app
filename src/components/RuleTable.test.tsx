@@ -99,16 +99,27 @@ describe("RuleTable", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("shows a destination's full path with the drive name beneath it", () => {
-    // A drive letter on a removable disk belongs to whichever drive was
-    // plugged in first, so the path alone does not say which physical drive
-    // the backup is on — the question someone with three USB drives in a
-    // drawer is actually asking.
+  it("leads a destination with its drive and shows the path within it", () => {
+    // The drive is what the destination actually is: a volume identity plus
+    // a path relative to it. The drive letter is not part of that, so it
+    // must not be what the reader sees first.
     render(<RuleTable rows={sampleRows()} />);
 
     const text = cellText(0, /Destination/i);
-    expect(text).toContain("E:\\Backups\\Lightroom");
     expect(text).toContain("Archive");
+    expect(text).toContain("Backups\\Lightroom");
+  });
+
+  it("shows the drive letter only while the drive is attached", () => {
+    // A letter printed beside an unplugged drive belongs to nothing, or to
+    // some other disk.
+    const rows = sampleRows();
+    render(<RuleTable rows={rows} />);
+
+    // "Phone Photos" has one attached destination and one that is not.
+    expect(screen.getAllByText(/^Photos \(E:\)$/).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/^Archive \(E:\)$/)).toBeNull();
+    expect(screen.getAllByText("Archive").length).toBeGreaterThan(0);
   });
 
   it("names the drive even when the platform calls it a fixed disk", () => {
@@ -126,12 +137,12 @@ describe("RuleTable", () => {
     expect(screen.getAllByText("Archive").length).toBeGreaterThan(0);
   });
 
-  it("renders the drive name in italics, not as part of the path", () => {
+  it("renders the path in italics beneath the drive, not merged into it", () => {
     render(<RuleTable rows={sampleRows()} />);
-    const names = screen.getAllByText("Archive");
-    expect(names.length).toBeGreaterThan(0);
+    const paths = screen.getAllByText("Backups\\Lightroom");
+    expect(paths.length).toBeGreaterThan(0);
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-    expect(names[0]!.className).toContain("italic");
+    expect(paths[0]!.className).toContain("italic");
   });
 
   it("renders one row per rule", () => {

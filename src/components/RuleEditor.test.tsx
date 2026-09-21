@@ -96,8 +96,8 @@ describe("RuleEditor destinations", () => {
     editFirstRule();
     await user.click(screen.getByText("Add destination…"));
 
-    expect(await screen.findByText("E:\\Backups\\Photos")).toBeInTheDocument();
-    expect(screen.getAllByText("Archive 4TB").length).toBeGreaterThan(0);
+    expect(await screen.findByText("Archive 4TB (E:)")).toBeInTheDocument();
+    expect(screen.getAllByText("Backups\\Photos").length).toBeGreaterThan(0);
   });
 
   it("falls back to the serial when the picked drive has no label", async () => {
@@ -108,6 +108,6 @@ describe("RuleEditor destinations", () => {
     editFirstRule();
     await user.click(screen.getByText("Add destination…"));
 
-    expect(await screen.findByText("Unnamed drive (1A2B3C4D)")).toBeInTheDocument();
+    expect(await screen.findByText("Unnamed drive 1A2B3C4D (E:)")).toBeInTheDocument();
   });
 });

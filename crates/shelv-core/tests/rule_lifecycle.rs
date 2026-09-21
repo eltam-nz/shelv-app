@@ -26,7 +26,7 @@ use shelv_core::platform::{
 };
 use shelv_core::safety::{check_rule, RuleProblem};
 use shelv_core::store::Store;
-use shelv_core::view::{refresh_stored_volumes, rule_rows, Availability};
+use shelv_core::view::{drive_rows, refresh_stored_volumes, rule_rows, Availability};
 use shelv_core::volumes::resolve_picked_folder;
 use shelv_core::{CoreError, Result};
 
@@ -358,5 +358,97 @@ fn renaming_a_drive_updates_the_stored_name_without_enrolling_new_drives() {
             .label
             .as_deref(),
         Some("Archive 2026")
+    );
+}
+
+#[test]
+fn the_drives_pane_reports_use_and_refuses_to_forget_a_drive_in_use() {
+    let store = Store::open_in_memory().unwrap();
+    let fs = system_and_backup();
+
+    let source = resolve_picked_folder(&store, &fs, Path::new("/root/Pictures"), 1000).unwrap();
+    let destination =
+        resolve_picked_folder(&store, &fs, Path::new("/media/backup/Backups"), 1000).unwrap();
+    let rule = store
+        .create_rule(&spec("Photos", source.path), 1000)
+        .unwrap();
+    store.add_destination(rule, &destination.path, 0).unwrap();
+
+    // The user names the backup drive.
+    store
+        .set_volume_nickname(destination.path.volume, Some("Archive 4TB"))
+        .unwrap();
+
+    let rows = drive_rows(&store, &fs).unwrap();
+    assert_eq!(rows.len(), 2, "both drives the rule uses");
+    let backup = rows
+        .iter()
+        .find(|r| r.status.volume.id == destination.path.volume)
+        .expect("the backup drive");
+    assert_eq!(
+        backup.status.volume.nickname.as_deref(),
+        Some("Archive 4TB")
+    );
+    assert_eq!(backup.status.availability, Availability::Available);
+    assert_eq!(backup.rule_count, 1);
+
+    // Forgetting it is refused while the rule points at it...
+    let error = store
+        .delete_volume(destination.path.volume)
+        .expect_err("a drive in use must not be forgotten");
+    assert!(matches!(error, CoreError::Refused(_)), "{error:?}");
+
+    // ...and allowed once nothing does.
+    store.delete_rule(rule).unwrap();
+    store.delete_volume(destination.path.volume).unwrap();
+    assert_eq!(drive_rows(&store, &fs).unwrap().len(), 1);
+}
+
+#[test]
+fn a_nickname_outlives_the_drive_being_unplugged_and_renamed() {
+    // The case the nickname exists for: the drive goes in a drawer, comes
+    // back at a different letter with a different label, and is still the
+    // one the user named.
+    let store = Store::open_in_memory().unwrap();
+    let fs = system_and_backup();
+
+    let picked =
+        resolve_picked_folder(&store, &fs, Path::new("/media/backup/Backups"), 1000).unwrap();
+    store
+        .set_volume_nickname(picked.path.volume, Some("Archive 4TB"))
+        .unwrap();
+
+    // Unplugged.
+    let unplugged = StubFs {
+        volumes: vec![volume("/", "System", DriveType::Fixed)],
+    };
+    refresh_stored_volumes(&store, &unplugged, 2000).unwrap();
+    let row = drive_rows(&store, &unplugged)
+        .unwrap()
+        .into_iter()
+        .find(|r| r.status.volume.id == picked.path.volume)
+        .expect("still recorded");
+    assert_eq!(row.status.availability, Availability::Disconnected);
+    assert_eq!(row.status.volume.nickname.as_deref(), Some("Archive 4TB"));
+
+    // Back, relabelled and at a new mount point.
+    let mut moved = volume("/media/usb0", "Renamed In Explorer", DriveType::Removable);
+    moved.identity.value = "uuid-Backup Drive".to_owned();
+    let back = StubFs {
+        volumes: vec![volume("/", "System", DriveType::Fixed), moved],
+    };
+    refresh_stored_volumes(&store, &back, 3000).unwrap();
+
+    let row = drive_rows(&store, &back)
+        .unwrap()
+        .into_iter()
+        .find(|r| r.status.volume.id == picked.path.volume)
+        .expect("recognised by identity, not by letter");
+    assert_eq!(row.status.availability, Availability::Available);
+    assert_eq!(row.status.volume.nickname.as_deref(), Some("Archive 4TB"));
+    assert_eq!(
+        row.status.volume.label.as_deref(),
+        Some("Renamed In Explorer"),
+        "the label follows the OS; the nickname does not"
     );
 }

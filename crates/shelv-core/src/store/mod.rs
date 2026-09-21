@@ -176,13 +176,85 @@ impl Store {
         Ok(())
     }
 
+    /// Sets or clears the name the user gave a drive.
+    ///
+    /// Deliberately its own statement rather than a field on
+    /// [`upsert_volume`](Self::upsert_volume) or
+    /// [`refresh_volume`](Self::refresh_volume). Both of those are driven by
+    /// what the operating system reports, and `refresh_volume` runs once a
+    /// second — if either wrote this column, the name the user chose would be
+    /// erased on the next tick.
+    ///
+    /// An empty or whitespace-only name clears it, so the display falls back
+    /// to the label rather than showing a blank where a name should be.
+    pub fn set_volume_nickname(&self, id: VolumeId, nickname: Option<&str>) -> Result<()> {
+        let cleaned = nickname.map(str::trim).filter(|n| !n.is_empty());
+        let n = self
+            .conn
+            .execute(
+                "UPDATE volume SET nickname = ?2 WHERE id = ?1",
+                rusqlite::params![id, cleaned],
+            )
+            .map_err(store_err("could not rename the drive"))?;
+        if n == 0 {
+            return Err(CoreError::NotFound(format!("volume {id}")));
+        }
+        Ok(())
+    }
+
+    /// How many rules use this volume, as a source or as a destination.
+    ///
+    /// Counted so that forgetting a drive can refuse with a reason. The
+    /// foreign keys would refuse it anyway, but as an opaque constraint
+    /// failure — and "this drive is used by 3 rules" is the thing the user
+    /// needs to know.
+    pub fn volume_references(&self, id: VolumeId) -> Result<usize> {
+        self.conn
+            .query_row(
+                "SELECT (SELECT count(*) FROM rule WHERE source_volume = ?1)
+                      + (SELECT count(*) FROM destination WHERE volume_id = ?1)",
+                [id],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(|n| usize::try_from(n).unwrap_or(0))
+            .map_err(store_err("could not count the rules using this drive"))
+    }
+
+    /// Removes a volume Shelv has recorded.
+    ///
+    /// Refuses while any rule still points at it. Cascading here would delete
+    /// backup rules as a side effect of tidying a drive list, which is not
+    /// what anyone pressing a button on a drive means.
+    ///
+    /// Forgetting a drive removes only Shelv's record of it. Nothing on the
+    /// drive is touched, and picking a folder on it again re-registers it
+    /// with the same identity.
+    pub fn delete_volume(&self, id: VolumeId) -> Result<()> {
+        let references = self.volume_references(id)?;
+        if references > 0 {
+            return Err(CoreError::Refused(format!(
+                "this drive is still used by {references} {}; remove or repoint {} first",
+                if references == 1 { "rule" } else { "rules" },
+                if references == 1 { "it" } else { "them" },
+            )));
+        }
+        let n = self
+            .conn
+            .execute("DELETE FROM volume WHERE id = ?1", [id])
+            .map_err(store_err("could not forget the drive"))?;
+        if n == 0 {
+            return Err(CoreError::NotFound(format!("volume {id}")));
+        }
+        Ok(())
+    }
+
     /// Every volume Shelv has recorded, attached or not.
     pub fn volumes(&self) -> Result<Vec<StoredVolume>> {
         let mut stmt = self
             .conn
             .prepare(
                 "SELECT id, identity_kind, identity, serial, label, filesystem, drive_type,
-                        is_sync_root, last_seen_at, last_mount
+                        is_sync_root, last_seen_at, last_mount, nickname
                  FROM volume ORDER BY id",
             )
             .map_err(store_err("could not list volumes"))?;
@@ -198,7 +270,7 @@ impl Store {
         self.conn
             .query_row(
                 "SELECT id, identity_kind, identity, serial, label, filesystem, drive_type,
-                        is_sync_root, last_seen_at, last_mount
+                        is_sync_root, last_seen_at, last_mount, nickname
                  FROM volume WHERE id = ?1",
                 [id],
                 read_volume,
@@ -690,6 +762,7 @@ fn read_volume(row: &Row<'_>) -> rusqlite::Result<StoredVolume> {
         is_sync_root: row.get::<_, i64>(7)? != 0,
         last_seen_at: row.get(8)?,
         last_mount: row.get::<_, Option<String>>(9)?.map(|s| path_from_db(&s)),
+        nickname: row.get(10)?,
     })
 }
 

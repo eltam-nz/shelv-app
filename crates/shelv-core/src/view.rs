@@ -104,6 +104,40 @@ impl RuleRow {
     }
 }
 
+/// One row of the drives table.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
+#[ts(export, export_to = "../../../src/types/")]
+pub struct DriveRow {
+    /// The drive and whether it can be written to right now.
+    pub status: VolumeStatus,
+    /// How many rules use it, as a source or as a destination.
+    ///
+    /// Shown so the user can see what forgetting a drive would break before
+    /// they try, rather than being told only when it is refused.
+    #[ts(type = "number")]
+    pub rule_count: u32,
+}
+
+/// Every drive Shelv has recorded, with its current status and use.
+///
+/// Recorded drives only. A drive enters the database by the user picking a
+/// folder on it through the operating system's dialog (`docs/PLAN.md` §4.2),
+/// and enumerating attached-but-unknown drives here would hand the frontend
+/// a list of the user's hardware for no gain — the picker is itself the OS's
+/// list of what is attached, so that is where a new drive is added from.
+pub fn drive_rows(store: &Store, fs: &dyn PlatformFs) -> Result<Vec<DriveRow>> {
+    volume_statuses(store, fs)?
+        .into_iter()
+        .map(|status| {
+            let rule_count = store.volume_references(status.volume.id)?;
+            Ok(DriveRow {
+                status,
+                rule_count: u32::try_from(rule_count).unwrap_or(u32::MAX),
+            })
+        })
+        .collect()
+}
+
 /// Classifies every recorded volume against what is attached right now.
 pub fn volume_statuses(store: &Store, fs: &dyn PlatformFs) -> Result<Vec<VolumeStatus>> {
     let attached = fs.volumes()?;
@@ -259,6 +293,7 @@ fn unknown_volume(id: crate::model::VolumeId) -> VolumeStatus {
             },
             serial: None,
             label: None,
+            nickname: None,
             filesystem: None,
             drive_type: DriveType::Unknown,
             is_sync_root: false,
@@ -306,6 +341,7 @@ mod tests {
             identity: identity(value),
             serial: None,
             label: Some("Backup".to_owned()),
+            nickname: None,
             filesystem: Some("exFAT".to_owned()),
             drive_type: DriveType::Removable,
             is_sync_root: false,

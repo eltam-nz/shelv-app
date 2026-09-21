@@ -32,10 +32,15 @@ const MIGRATIONS: &[Migration] = &[
         name: "layout implies deletions",
         sql: include_str!("../../migrations/0002_layout_implies_deletions.sql"),
     },
+    Migration {
+        version: 3,
+        name: "volume nickname",
+        sql: include_str!("../../migrations/0003_volume_nickname.sql"),
+    },
 ];
 
 /// The schema version this build expects.
-pub const LATEST_VERSION: i64 = 2;
+pub const LATEST_VERSION: i64 = 3;
 
 /// Applies any migrations the database has not yet seen.
 ///
@@ -131,7 +136,7 @@ mod tests {
         // rules intact. It also pins that the bundled SQLite is new enough
         // for ALTER TABLE ... DROP COLUMN (3.35+).
         let mut conn = Connection::open_in_memory().unwrap();
-        apply_only_v1(&mut conn);
+        apply_up_to(&mut conn, 1);
         conn.execute_batch(
             "INSERT INTO volume (identity_kind, identity, drive_type)
              VALUES ('linux_fs_uuid', 'uuid-1', 'removable');
@@ -155,12 +160,38 @@ mod tests {
         );
     }
 
-    /// Brings a connection to schema v1 only, as a shipped v1 build left it.
-    fn apply_only_v1(conn: &mut Connection) {
-        let first = MIGRATIONS.first().unwrap();
-        let tx = conn.transaction().unwrap();
-        apply(&tx, first).unwrap();
-        tx.commit().unwrap();
+    /// Brings a connection to a given schema version, as a shipped build of
+    /// that version would have left it.
+    fn apply_up_to(conn: &mut Connection, version: i64) {
+        for migration in MIGRATIONS.iter().filter(|m| m.version <= version) {
+            let tx = conn.transaction().unwrap();
+            apply(&tx, migration).unwrap();
+            tx.commit().unwrap();
+        }
+    }
+
+    #[test]
+    fn a_v2_database_gains_the_nickname_column_without_losing_its_drives() {
+        // Somebody who installed the previous build already has drives
+        // recorded. The nickname column arriving must not disturb them, and
+        // must arrive empty rather than guessing a name.
+        let mut conn = Connection::open_in_memory().unwrap();
+        apply_up_to(&mut conn, 2);
+        conn.execute_batch(
+            "INSERT INTO volume (identity_kind, identity, label, drive_type)
+             VALUES ('linux_fs_uuid', 'uuid-1', 'Expansion', 'removable');",
+        )
+        .unwrap();
+
+        assert_eq!(migrate(&mut conn).unwrap(), LATEST_VERSION);
+
+        let (label, nickname): (String, Option<String>) = conn
+            .query_row("SELECT label, nickname FROM volume", [], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })
+            .unwrap();
+        assert_eq!(label, "Expansion", "the drive must survive the migration");
+        assert_eq!(nickname, None, "no nickname is not the same as a guess");
     }
 
     #[test]

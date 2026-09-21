@@ -10,7 +10,7 @@ import {
 import { useMemo, useState } from "react";
 
 import { tagStyle } from "../lib/palette";
-import { formatLocation, fullPath, volumeName } from "../lib/volumes";
+import { volumeName } from "../lib/volumes";
 import { DriveLocation } from "./DriveLocation";
 import type {
   Layout,
@@ -148,20 +148,16 @@ const DESTINATION_ENTRY = "flex min-h-9 flex-col justify-center";
 /**
  * One stored location in the table.
  *
- * Translates what the core records — a volume plus a path relative to it —
- * into the path and drive name [`DriveLocation`] renders. When the drive has
- * never been seen at a mount point there is no full path to build, so the
- * drive-relative form stands in.
+ * A thin adapter: the core already records exactly what [`DriveLocation`]
+ * wants — a volume and a path relative to it — so nothing is assembled here.
  */
 function Location({ status, relative }: { status: VolumeStatus; relative: string }) {
-  const path = fullPath(status, relative);
-
   return (
     <div className={DESTINATION_ENTRY}>
       <DriveLocation
         name={volumeName(status)}
-        path={path ?? formatLocation(status, relative)}
-        connected={status.mount_point !== null}
+        relative={relative}
+        mount={status.mount_point}
       />
     </div>
   );

@@ -9,6 +9,7 @@ export type { CoreError } from "./CoreError";
 export type { Destination } from "./Destination";
 export type { DestinationId } from "./DestinationId";
 export type { DestinationStatus } from "./DestinationStatus";
+export type { DriveRow } from "./DriveRow";
 export type { DriveType } from "./DriveType";
 export type { EventLevel } from "./EventLevel";
 export type { Layout } from "./Layout";

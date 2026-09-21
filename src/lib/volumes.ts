@@ -8,6 +8,8 @@ import type { VolumeStatus } from "../types";
 
 /** The parts of a drive's identity that can contribute to its name. */
 export interface DriveNameParts {
+  /** The name the user gave this drive, if they gave it one. */
+  nickname?: string | null;
   /** The filesystem label, if the drive has one. */
   label: string | null;
   /** The volume serial, where the platform reports one. */
@@ -21,8 +23,14 @@ export interface DriveNameParts {
 /**
  * The best available name for a drive.
  *
- * Plenty of drives have no filesystem label — a freshly formatted one usually
- * does not, and Linux only reports one when udev has published it.
+ * The user's own name wins outright. It is the only one of these they chose,
+ * it is the only one that stays put when the drive is relabelled or comes
+ * back at a different letter, and it is the only one that can tell two
+ * identical drives apart.
+ *
+ * Below it, plenty of drives have no filesystem label — a freshly formatted
+ * one usually does not, and Linux only reports one when udev has published
+ * it.
  *
  * The serial comes before the mount point in the fallback chain, even though
  * it is uglier, because it identifies the drive and the mount point does not.
@@ -31,10 +39,13 @@ export interface DriveNameParts {
  * they are the same drive.
  */
 export function driveName(parts: DriveNameParts): string {
-  const { label, serial, mount, lastMount } = parts;
+  const { nickname, label, serial, mount, lastMount } = parts;
+  if (nickname !== null && nickname !== undefined && nickname !== "") {
+    return nickname;
+  }
   if (label !== null && label !== "") return label;
   if (serial !== null && serial !== undefined && serial !== "") {
-    return `Unnamed drive (${serial})`;
+    return `Unnamed drive ${serial}`;
   }
   if (mount !== null && mount !== "") return mount;
   if (lastMount !== null && lastMount !== undefined && lastMount !== "") {
@@ -46,6 +57,7 @@ export function driveName(parts: DriveNameParts): string {
 /** The best available name for a recorded drive. */
 export function volumeName(status: VolumeStatus): string {
   return driveName({
+    nickname: status.volume.nickname,
     label: status.volume.label,
     serial: status.volume.serial,
     mount: status.mount_point,

@@ -1,0 +1,14 @@
+-- A name the user gives a drive, kept against its stable identity.
+--
+-- The filesystem label is what Explorer shows, and it is often absent and
+-- often identical across two drives of the same model -- both blank, or both
+-- "Expansion". That is no use to someone deciding which of three drives in a
+-- drawer a rule writes to.
+--
+-- This is display only. Nothing matches, resolves or writes on it: the
+-- volume identity remains the only key anything is looked up by, because a
+-- name that decided where a backup went would reintroduce exactly the
+-- wrong-drive failure identity matching exists to prevent (PLAN §4, T3).
+--
+-- NULL means "no nickname set", and the UI falls back to the label.
+ALTER TABLE volume ADD COLUMN nickname TEXT;

@@ -1,12 +1,24 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { AppShell } from "./components/AppShell";
+import { DrivesTable } from "./components/DrivesTable";
 import { RuleEditor } from "./components/RuleEditor";
 import { RuleTable, type ViewMode } from "./components/RuleTable";
+import { SplitPane } from "./components/SplitPane";
 import { TagManager } from "./components/TagManager";
-import { deleteRule, listRules, listTags, onVolumesChanged, ShelvError } from "./lib/ipc";
+import {
+  deleteRule,
+  forgetDrive,
+  listDrives,
+  listRules,
+  listTags,
+  onVolumesChanged,
+  pickFolder,
+  setDriveNickname,
+  ShelvError,
+} from "./lib/ipc";
 import { tagStyle } from "./lib/palette";
-import type { RuleRow, Tag, TagId } from "./types";
+import type { DriveRow, RuleRow, Tag, TagId, VolumeId } from "./types";
 
 type Panel =
   | { kind: "none" }
@@ -15,8 +27,41 @@ type Panel =
   | { kind: "tags" }
   | { kind: "confirm-delete"; row: RuleRow };
 
+/**
+ * Remembers a window-layout preference across sessions.
+ *
+ * Wrapped because `localStorage` throws outright in some configurations
+ * rather than returning nothing, and a window that will not open because a
+ * divider position could not be read would be a ridiculous way to fail.
+ */
+function usePersisted<T>(key: string, initial: T): [T, (value: T) => void] {
+  const [value, setValue] = useState<T>(() => {
+    try {
+      const stored = localStorage.getItem(key);
+      return stored === null ? initial : (JSON.parse(stored) as T);
+    } catch {
+      return initial;
+    }
+  });
+
+  const store = (next: T) => {
+    setValue(next);
+    try {
+      localStorage.setItem(key, JSON.stringify(next));
+    } catch {
+      // A preference that cannot be saved is not worth interrupting anyone.
+    }
+  };
+
+  return [value, store];
+}
+
 export function App() {
   const [rows, setRows] = useState<RuleRow[]>([]);
+  const [drives, setDrives] = useState<DriveRow[]>([]);
+  const [driveError, setDriveError] = useState<string | null>(null);
+  const [showDrives, setShowDrives] = usePersisted("shelv.drives.shown", true);
+  const [split, setSplit] = usePersisted("shelv.drives.split", 2 / 3);
   const [tags, setTags] = useState<Tag[]>([]);
   const [filter, setFilter] = useState<TagId[]>([]);
   const [panel, setPanel] = useState<Panel>({ kind: "none" });
@@ -26,9 +71,14 @@ export function App() {
 
   const refresh = useCallback(async () => {
     try {
-      const [nextRows, nextTags] = await Promise.all([listRules(), listTags()]);
+      const [nextRows, nextTags, nextDrives] = await Promise.all([
+        listRules(),
+        listTags(),
+        listDrives(),
+      ]);
       setRows(nextRows);
       setTags(nextTags);
+      setDrives(nextDrives);
       setError(null);
     } catch (e: unknown) {
       setError(e instanceof ShelvError ? e.message : String(e));
@@ -86,6 +136,31 @@ export function App() {
     }
   };
 
+  /** Runs a drive action, surfacing its refusal next to the drives table. */
+  const driveAction = async (action: () => Promise<void>) => {
+    setDriveError(null);
+    try {
+      await action();
+      await refresh();
+    } catch (e: unknown) {
+      setDriveError(e instanceof ShelvError ? e.message : String(e));
+    }
+  };
+
+  /**
+   * Adds a drive through the native picker.
+   *
+   * The picker registers the volume as a side effect of the choice, which is
+   * the whole mechanism: a drive enters Shelv only by the user choosing it in
+   * the operating system's own dialog. The folder itself is not wanted here
+   * — this is registering a drive, not remembering a location — so the
+   * returned path is discarded.
+   */
+  const addDrive = () =>
+    driveAction(async () => {
+      await pickFolder();
+    });
+
   const unreachable = rows.filter(
     (row) => !row.destinations.some((d) => d.status.availability === "available"),
   ).length;
@@ -131,6 +206,25 @@ export function App() {
             <ViewToggle view={view} onChange={setView} />
             <button
               type="button"
+              aria-pressed={showDrives}
+              onClick={() => {
+                setShowDrives(!showDrives);
+              }}
+              title={showDrives ? "Hide the drives pane" : "Show the drives pane"}
+              className="rounded border border-border px-2.5 py-1 text-xs"
+              style={
+                showDrives
+                  ? {
+                      color: "var(--accent-blue)",
+                      backgroundColor: "var(--accent-blue-fill)",
+                    }
+                  : { color: "var(--fg-muted)" }
+              }
+            >
+              Drives
+            </button>
+            <button
+              type="button"
               onClick={() => {
                 setPanel({ kind: "tags" });
               }}
@@ -168,19 +262,45 @@ export function App() {
           )
         }
       >
-        {!loading && error === null && (
-          <RuleTable
-            rows={rows}
-            tagFilter={filter}
-            view={view}
-            onEdit={(row) => {
-              setPanel({ kind: "edit-rule", row });
-            }}
-            onCreate={() => {
-              setPanel({ kind: "new-rule" });
-            }}
-          />
-        )}
+        {!loading &&
+          error === null &&
+          (() => {
+            const rulesPane = (
+              <RuleTable
+                rows={rows}
+                tagFilter={filter}
+                view={view}
+                onEdit={(row) => {
+                  setPanel({ kind: "edit-rule", row });
+                }}
+                onCreate={() => {
+                  setPanel({ kind: "new-rule" });
+                }}
+              />
+            );
+
+            if (!showDrives) return rulesPane;
+
+            return (
+              <SplitPane
+                label="Height of the rules pane"
+                fraction={split}
+                onFractionChange={setSplit}
+                top={rulesPane}
+                bottom={
+                  <DrivesTable
+                    rows={drives}
+                    error={driveError}
+                    onAdd={() => void addDrive()}
+                    onRename={(id: VolumeId, nickname: string | null) =>
+                      void driveAction(() => setDriveNickname(id, nickname))
+                    }
+                    onForget={(id: VolumeId) => void driveAction(() => forgetDrive(id))}
+                  />
+                }
+              />
+            );
+          })()}
       </AppShell>
 
       {panel.kind === "new-rule" && (

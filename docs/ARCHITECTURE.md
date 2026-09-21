@@ -53,6 +53,35 @@ a concrete implementation. `scripts/check-platform-boundary.sh` fails CI if the
 | `volumes/` | Volume tracking and identity verification. **M1.** |
 | `watch/` | Notices that the set of attached drives has changed, and reports it only when it really has. |
 
+### Naming a drive
+
+A drive is shown by the first of these that exists: the **nickname** the user
+set, the **filesystem label** the OS reports, `Unnamed drive <serial>`, the
+current mount point, the last mount point. The serial comes before the mount
+point because it identifies the drive and the mount point does not — two
+unlabelled drives that have taken turns in the same port would otherwise both
+be called `E:\`, which does not merely fail to help, it says they are the
+same drive.
+
+The nickname is stored against the volume identity and is **display only**.
+`upsert_volume` and `refresh_volume` are both driven by what the OS reports
+and neither touches the column, so the once-a-second refresh cannot erase a
+name the user chose.
+
+A destination is rendered drive-first — `Archive 4TB (E:)` over
+`Backups\Lightroom` — because that is what is stored. The drive letter is not
+part of a destination at all, and is shown only while the drive is attached.
+
+### The drives pane
+
+A resizable split below the rules table, toggled from the top bar, listing
+every **recorded** drive with its nickname, Explorer label, current letter,
+availability and how many rules use it. Attached-but-unrecorded drives are
+deliberately not enumerated: **Add drive…** opens the same native picker
+every other location goes through, which is the OS's own consent step, so
+there is only ever one way a drive enters Shelv. Forgetting a drive is
+refused while any rule points at it.
+
 ## Volume identity
 
 The single most important decision in the data model, because getting it wrong

@@ -23,7 +23,7 @@ use shelv_core::model::{Rule, RuleId, RuleSpec, Run, Tag, TagId, VolumePath};
 use shelv_core::platform::PlatformFs;
 use shelv_core::safety::{check_rule, RuleProblem};
 use shelv_core::store::Store;
-use shelv_core::view::{rule_rows, volume_statuses, RuleRow, VolumeStatus};
+use shelv_core::view::{drive_rows, rule_rows, volume_statuses, DriveRow, RuleRow, VolumeStatus};
 use shelv_core::volumes::{resolve_picked_folder, PickedFolder};
 use shelv_core::{CoreError, Result};
 use tauri::ipc::Invoke;
@@ -259,6 +259,42 @@ fn list_volumes(state: State<'_, AppState>) -> Result<Vec<VolumeStatus>> {
     state.with_store(|store| volume_statuses(store, state.fs.as_ref()))
 }
 
+/// Every drive Shelv has recorded, with its status and how many rules use it.
+///
+/// This is what the drives pane renders. Only recorded drives: a drive is
+/// added by picking a folder on it through `pick_folder`, which is the
+/// operating system's own consent step, so there is no second way in and
+/// nothing here enumerates the user's attached hardware.
+#[tauri::command]
+fn list_drives(state: State<'_, AppState>) -> Result<Vec<DriveRow>> {
+    state.with_store(|store| drive_rows(store, state.fs.as_ref()))
+}
+
+/// Sets or clears the name the user gave a drive.
+///
+/// Display only. Nothing resolves or writes on a nickname — the volume
+/// identity remains the only key anything is matched by, because a name that
+/// decided where a backup went would reintroduce the wrong-drive failure
+/// (`docs/PLAN.md` §4, T3).
+#[tauri::command]
+fn set_drive_nickname(
+    state: State<'_, AppState>,
+    id: shelv_core::model::VolumeId,
+    nickname: Option<String>,
+) -> Result<()> {
+    state.with_store(|store| store.set_volume_nickname(id, nickname.as_deref()))
+}
+
+/// Removes Shelv's record of a drive.
+///
+/// Refused while any rule still points at it. Nothing on the drive itself is
+/// touched, and picking a folder on it again re-registers it under the same
+/// identity.
+#[tauri::command]
+fn forget_drive(state: State<'_, AppState>, id: shelv_core::model::VolumeId) -> Result<()> {
+    state.with_store(|store| store.delete_volume(id))
+}
+
 /// A rule's run history, newest first.
 #[tauri::command]
 fn list_runs(state: State<'_, AppState>, rule: RuleId, limit: u32) -> Result<Vec<Run>> {
@@ -354,6 +390,9 @@ pub fn handlers<R: Runtime>() -> impl Fn(Invoke<R>) -> bool + Send + Sync + 'sta
         delete_tag,
         set_rule_tags,
         list_volumes,
+        list_drives,
+        set_drive_nickname,
+        forget_drive,
         list_runs,
     ]
 }

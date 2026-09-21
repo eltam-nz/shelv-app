@@ -11,6 +11,7 @@ function status(over: Partial<VolumeStatus["volume"]> & { mount?: string | null 
       identity: { kind: "linux_fs_uuid" as const, value: "u" },
       serial: null,
       label: null,
+      nickname: null,
       filesystem: "ext4",
       drive_type: "removable" as const,
       is_sync_root: false,
@@ -103,13 +104,35 @@ describe("driveName", () => {
     // both be called "E:\\", which does not merely fail to help — it says
     // they are the same drive.
     expect(driveName({ label: null, serial: "1A2B3C4D", mount: "E:\\" })).toBe(
-      "Unnamed drive (1A2B3C4D)",
+      "Unnamed drive 1A2B3C4D",
     );
   });
 
   it("falls back to the mount point when there is no serial either", () => {
     expect(driveName({ label: null, serial: null, mount: "/media/backup" })).toBe(
       "/media/backup",
+    );
+  });
+});
+
+describe("driveName precedence", () => {
+  it("puts the name the user chose above everything the system reports", () => {
+    // It is the only one of these they chose, the only one that stays put
+    // when the drive is relabelled or comes back at another letter, and the
+    // only one that can tell two identical drives apart.
+    expect(
+      driveName({
+        nickname: "Archive 4TB",
+        label: "Expansion",
+        serial: "1A2B3C4D",
+        mount: "E:\\",
+      }),
+    ).toBe("Archive 4TB");
+  });
+
+  it("falls back to the Explorer label when no nickname is set", () => {
+    expect(driveName({ nickname: null, label: "Expansion", mount: "E:\\" })).toBe(
+      "Expansion",
     );
   });
 });

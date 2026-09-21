@@ -351,8 +351,15 @@ pub struct StoredVolume {
     pub identity: VolumeIdentity,
     /// Volume serial, where the platform exposes one.
     pub serial: Option<String>,
-    /// Human-readable label.
+    /// Human-readable label, as the operating system reports it.
     pub label: Option<String>,
+    /// A name the user gave this drive, or `None` if they have not.
+    ///
+    /// **Display only.** Nothing matches, resolves or writes on it: the
+    /// identity remains the only key anything is looked up by. A name that
+    /// decided where a backup went would reintroduce exactly the wrong-drive
+    /// failure identity matching exists to prevent (`docs/PLAN.md` §4, T3).
+    pub nickname: Option<String>,
     /// Filesystem name.
     pub filesystem: Option<String>,
     /// What backs the volume, as last seen.

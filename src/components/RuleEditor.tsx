@@ -9,7 +9,7 @@ import {
   validateRule,
 } from "../lib/ipc";
 import { tagStyle } from "../lib/palette";
-import { driveName, formatLocation, fullPath, volumeName } from "../lib/volumes";
+import { driveName, volumeName } from "../lib/volumes";
 import { DriveLocation } from "./DriveLocation";
 import {
   describeProblem,
@@ -53,10 +53,8 @@ interface LocationDraft {
   path: VolumePath;
   /** The drive's name, already resolved through `driveName`. */
   name: string;
-  /** The path to show: absolute where known. */
-  display: string;
-  /** Whether the drive is attached right now. */
-  connected: boolean;
+  /** Where the drive is mounted right now, or `null` if it is not attached. */
+  mount: string | null;
 }
 
 function emptySpec(source: VolumePath): RuleSpec {
@@ -113,10 +111,7 @@ export function RuleEditor({
       ? {
           path: existing.rule.spec.source,
           name: volumeName(existing.source),
-          display:
-            fullPath(existing.source, existing.rule.spec.source.relative) ??
-            formatLocation(existing.source, existing.rule.spec.source.relative),
-          connected: existing.source.mount_point !== null,
+          mount: existing.source.mount_point,
         }
       : null,
   );
@@ -128,10 +123,7 @@ export function RuleEditor({
       ? existing.destinations.map((d) => ({
           path: d.destination.path,
           name: volumeName(d.status),
-          display:
-            fullPath(d.status, d.destination.path.relative) ??
-            formatLocation(d.status, d.destination.path.relative),
-          connected: d.status.mount_point !== null,
+          mount: d.status.mount_point,
         }))
       : [],
   );
@@ -173,8 +165,7 @@ export function RuleEditor({
       const draft: LocationDraft = {
         path: picked.path,
         name: draftName(picked),
-        display: picked.display_path,
-        connected: true,
+        mount: picked.mount_point,
       };
       setSource(draft);
       setSpec((current) =>
@@ -195,8 +186,7 @@ export function RuleEditor({
         {
           path: picked.path,
           name: draftName(picked),
-          display: picked.display_path,
-          connected: true,
+          mount: picked.mount_point,
         },
       ]);
     } catch (e: unknown) {
@@ -271,8 +261,8 @@ export function RuleEditor({
               {source && (
                 <DriveLocation
                   name={source.name}
-                  path={source.display}
-                  connected={source.connected}
+                  relative={source.path.relative}
+                  mount={source.mount}
                 />
               )}
             </div>
@@ -306,8 +296,8 @@ export function RuleEditor({
                         <div className="flex items-start justify-between gap-3">
                           <DriveLocation
                             name={destination.name}
-                            path={destination.display}
-                            connected={destination.connected}
+                            relative={destination.path.relative}
+                            mount={destination.mount}
                           />
                           <button
                             type="button"
