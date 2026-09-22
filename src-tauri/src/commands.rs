@@ -360,7 +360,7 @@ fn list_runs(state: State<'_, AppState>, rule: RuleId, limit: u32) -> Result<Vec
 /// preview, since a rule aimed at three drives usually has one plugged in.
 #[tauri::command]
 fn plan_run(state: State<'_, AppState>, id: RuleId) -> Result<Vec<DestinationPlan>> {
-    state.with_store(|store| plan_rule(store, state.fs.as_ref(), id))
+    state.with_store(|store| plan_rule(store, state.fs.as_ref(), id, now()))
 }
 
 /// A rule's raw configuration, for the editor.

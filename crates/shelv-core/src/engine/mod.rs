@@ -14,12 +14,13 @@
 
 pub mod copier;
 pub mod planner;
+pub mod run;
 pub mod stamp;
 pub mod trash;
 
 use serde::{Deserialize, Serialize};
 
-use crate::model::{DestinationId, Layout, RuleId};
+use crate::model::{DestinationId, RuleId};
 use crate::platform::{PlatformFs, VolumeInfo};
 use crate::store::Store;
 use crate::{CoreError, Result};
@@ -64,7 +65,12 @@ pub struct DestinationPlan {
 /// A destination whose drive is not attached yields
 /// [`PlanOutcome::Unavailable`] rather than an error: a rule aimed at three
 /// drives with one plugged in should still preview that one.
-pub fn plan_rule(store: &Store, fs: &dyn PlatformFs, rule: RuleId) -> Result<Vec<DestinationPlan>> {
+pub fn plan_rule(
+    store: &Store,
+    fs: &dyn PlatformFs,
+    rule: RuleId,
+    now: i64,
+) -> Result<Vec<DestinationPlan>> {
     let rule = store.rule(rule)?;
     let attached = fs.volumes()?;
 
@@ -85,7 +91,14 @@ pub fn plan_rule(store: &Store, fs: &dyn PlatformFs, rule: RuleId) -> Result<Vec
         .map(|destination| {
             Ok(DestinationPlan {
                 destination: destination.id,
-                outcome: plan_destination(store, fs, &rule.spec, &attached, &destination.path)?,
+                outcome: plan_destination(
+                    store,
+                    fs,
+                    &rule.spec,
+                    &attached,
+                    &destination.path,
+                    now,
+                )?,
             })
         })
         .collect()
@@ -98,6 +111,7 @@ fn plan_destination(
     spec: &crate::model::RuleSpec,
     attached: &[VolumeInfo],
     destination: &crate::model::VolumePath,
+    now: i64,
 ) -> Result<PlanOutcome> {
     let recorded = store.volume(destination.volume)?;
     let Some(live) = live_volume(attached, &recorded.identity) else {
@@ -128,16 +142,11 @@ fn plan_destination(
         mtime_tolerance: live.mtime_tolerance(),
     };
 
-    // A snapshot writes a fresh timestamped tree, so there is nothing to
-    // compare against even when the destination folder is full of previous
-    // snapshots — comparing would let a new run edit an old one.
-    let compare_against = if spec.layout == Layout::Snapshot || !root.exists() {
-        None
-    } else {
-        Some(root.as_path())
-    };
-
-    planner::plan(fs, &source, compare_against, &options).map(|plan| PlanOutcome::Ready { plan })
+    // Through the same call the real run makes, so a preview can never
+    // describe a different run from the one that follows it. `now` only
+    // names the snapshot folder a future run would create; the preview says
+    // what would be written, not when.
+    run::plan_run(fs, &source, &root, &options, now).map(|(_, plan)| PlanOutcome::Ready { plan })
 }
 
 /// The attached volume matching a recorded identity, if it is there.
@@ -161,7 +170,9 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use super::*;
-    use crate::model::{Packaging, PlaceholderPolicy, Retention, RuleSpec, Schedule, VolumePath};
+    use crate::model::{
+        Layout, Packaging, PlaceholderPolicy, Retention, RuleSpec, Schedule, VolumePath,
+    };
     use crate::platform::{
         CaseSensitivity, DriveType, SpaceInfo, VolumeIdentity, VolumeIdentityKind,
     };
@@ -271,6 +282,8 @@ mod tests {
         (store, fs, rule)
     }
 
+    const NOW: i64 = 1_758_526_452;
+
     fn plan_of(outcome: &PlanOutcome) -> &Plan {
         match outcome {
             PlanOutcome::Ready { plan } => plan,
@@ -285,7 +298,7 @@ mod tests {
         fs::write(src.path().join("one.raw"), b"hello").unwrap();
 
         let (store, fs, rule) = fixture(src.path(), dst.path(), Layout::Mirror);
-        let plans = plan_rule(&store, &fs, rule).unwrap();
+        let plans = plan_rule(&store, &fs, rule, NOW).unwrap();
 
         assert_eq!(plans.len(), 1);
         let plan = plan_of(&plans[0].outcome);
@@ -302,7 +315,7 @@ mod tests {
         fs::write(dst.path().join("gone.raw"), b"old").unwrap();
 
         let (store, fs, rule) = fixture(src.path(), dst.path(), Layout::Mirror);
-        let plans = plan_rule(&store, &fs, rule).unwrap();
+        let plans = plan_rule(&store, &fs, rule, NOW).unwrap();
 
         // The plan says the destination file would go...
         assert_eq!(plan_of(&plans[0].outcome).deletions.len(), 1);
@@ -320,7 +333,7 @@ mod tests {
         // Unplug the backup drive, leaving the rule pointing at it.
         fs.volumes.retain(|v| v.identity.value != "backup-drive");
 
-        let plans = plan_rule(&store, &fs, rule).unwrap();
+        let plans = plan_rule(&store, &fs, rule, NOW).unwrap();
         assert_eq!(plans.len(), 1);
         assert!(
             matches!(&plans[0].outcome, PlanOutcome::Unavailable { reason } if reason.contains("not attached")),
@@ -340,7 +353,7 @@ mod tests {
         fs::write(dst.path().join("one.raw"), b"hello").unwrap();
 
         let (store, fs, rule) = fixture(src.path(), dst.path(), Layout::Snapshot);
-        let plan = plan_rule(&store, &fs, rule).unwrap();
+        let plan = plan_rule(&store, &fs, rule, NOW).unwrap();
         let plan = plan_of(&plan[0].outcome);
 
         assert_eq!(plan.copies.len(), 1, "a snapshot copies everything");
@@ -355,7 +368,7 @@ mod tests {
 
         fs.volumes.retain(|v| v.identity.value != "source-drive");
 
-        let error = plan_rule(&store, &fs, rule).expect_err("nothing can be planned");
+        let error = plan_rule(&store, &fs, rule, NOW).expect_err("nothing can be planned");
         assert!(matches!(error, CoreError::Refused(_)), "{error:?}");
     }
 }

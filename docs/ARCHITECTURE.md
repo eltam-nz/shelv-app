@@ -228,6 +228,36 @@ failure. The `Z` is there so nobody has to guess. Nothing prunes the trash
 yet: retention is M3, and a trash folder that quietly emptied itself before
 then would be the same mistake as deleting outright, only later.
 
+### One run, start to finish
+
+`engine::run::execute` is the order those three modules go in: plan, copy,
+and — for a mirror only — move what the source no longer has out of the way.
+Deletion comes **after** the copy, so a file about to be replaced is
+replaced rather than trashed and rewritten, and a run cancelled part-way
+through its copy never reaches the deletion pass at all.
+
+Two decisions live here rather than in any of the three:
+
+- **Where a run writes.** A mirror writes into the destination folder
+  itself. A snapshot writes into a new timestamped folder beneath it and
+  never touches one already there — no diff, no deletion, every file copied
+  again. A snapshot that skipped unchanged files would be a snapshot with
+  holes in it, and restoring from it would need every earlier folder. If a
+  second run starts within the same second as one that already exists, it
+  takes the next free name rather than writing into it; one-second timestamp
+  resolution is otherwise a way for "nothing already written is ever
+  touched" to hold for last year's snapshot and not for the one from a
+  moment ago.
+- **How the run is recorded.** Cancelled beats everything, because a
+  cancelled run has neither failed nor succeeded and putting it in the
+  `Partial` column would hide the runs that need attention. Otherwise any
+  unreadable file, failed copy or failed move makes the run `Partial`;
+  only a run that did everything it planned is `Ok`.
+
+Retention is M3, so snapshots accumulate. The editor already says pruning is
+governed by the retention setting, which must not be read as saying it is
+happening yet.
+
 ## Volume identity
 
 The single most important decision in the data model, because getting it wrong
