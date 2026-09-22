@@ -46,7 +46,7 @@ a concrete implementation. `scripts/check-platform-boundary.sh` fails CI if the
 | `store/` | SQLite. Rules, destinations, tags, known volumes, run history. Schema migrations keyed on `user_version`. |
 | `model/` | The domain types, and how each is spelled in the database. |
 | `view/` | Aggregates for the UI: a rule plus its tags, destinations, availability and last result. |
-| `engine/` | Plan, execute, prune. **M1.** |
+| `engine/` | Plan, execute, prune. `engine::planner` is complete and writes nothing; the copier is **M1.2**. |
 | `cloud/` | OneDrive hydration, budgets, pin-state restore. **M4.** |
 | `scheduler/` | Cron evaluation, catch-up, run-on-connect, the run queue. **M3.** |
 | `safety/` | Path canonicalisation and the destructive-operation guards. **M1.** |
@@ -123,6 +123,38 @@ deliberately not enumerated: **Add drive…** opens the same native picker
 every other location goes through, which is the OS's own consent step, so
 there is only ever one way a drive enters Shelv. Forgetting a drive is
 refused while any rule points at it.
+
+### Planning a run
+
+`engine::planner::plan` walks the source, applies the rule's ignore patterns,
+indexes the destination and produces a `Plan` — copies, deletions,
+directories, and every entry it passed over with the reason why. It opens
+files for metadata only and writes nothing, so a dry run is literally the
+same code the real run will use rather than a second implementation that can
+disagree with it.
+
+Four things it has to get right, each of which loses or corrupts data if it
+does not:
+
+- **Containment.** Links are never followed by the walk itself. Each one is
+  resolved individually and both ends canonicalised; a target outside the
+  source root is refused even when the rule follows links, because otherwise
+  a link placed inside the source is a way to make Shelv copy anything on the
+  machine.
+- **mtime tolerance.** Taken from the *destination* volume. FAT32 records
+  timestamps to two seconds, so an exact comparison against an NTFS source
+  marks every file changed and re-copies the whole tree on every run.
+- **Case folding.** Also the destination's, through `CaseSensitivity::fold`.
+  It is the destination that decides whether two source names collide, and a
+  collision left unfolded would leave mirror treating one of the pair as
+  extraneous.
+- **Unreadable entries.** Recorded as skips, not swallowed, so the run
+  reports `Partial` rather than `Ok`.
+
+`engine::plan_rule` is the id-taking layer above it: it resolves the rule's
+source and destinations from the database, plans each destination on that
+destination's own terms, and reports an absent drive as `Unavailable` rather
+than failing the whole preview. `plan_run` exposes it over IPC.
 
 ## Volume identity
 

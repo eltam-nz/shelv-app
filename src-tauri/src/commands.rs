@@ -19,6 +19,7 @@
 
 use std::sync::Mutex;
 
+use shelv_core::engine::{plan_rule, DestinationPlan};
 use shelv_core::model::{Rule, RuleId, RuleSpec, Run, Tag, TagId, VolumePath};
 use shelv_core::platform::PlatformFs;
 use shelv_core::safety::{check_rule, RuleProblem};
@@ -348,6 +349,20 @@ fn list_runs(state: State<'_, AppState>, rule: RuleId, limit: u32) -> Result<Vec
     state.with_store(|store| store.runs_for_rule(rule, limit))
 }
 
+/// What running a rule would do, without doing any of it.
+///
+/// A dry run, and the same code path a real run will take — a preview
+/// produced by different logic from the run it previews would be worse than
+/// no preview at all. Reads and compares; writes nothing.
+///
+/// Takes a rule id, so the frontend still names no path. Destinations whose
+/// drive is absent come back as `Unavailable` rather than failing the whole
+/// preview, since a rule aimed at three drives usually has one plugged in.
+#[tauri::command]
+fn plan_run(state: State<'_, AppState>, id: RuleId) -> Result<Vec<DestinationPlan>> {
+    state.with_store(|store| plan_rule(store, state.fs.as_ref(), id))
+}
+
 /// A rule's raw configuration, for the editor.
 #[tauri::command]
 fn get_rule_spec(state: State<'_, AppState>, id: RuleId) -> Result<Rule> {
@@ -443,5 +458,6 @@ pub fn handlers<R: Runtime>() -> impl Fn(Invoke<R>) -> bool + Send + Sync + 'sta
         set_drive_nickname,
         forget_drive,
         list_runs,
+        plan_run,
     ]
 }

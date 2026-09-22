@@ -19,6 +19,7 @@ import type {
   CoreError,
   DataLocations,
   DestinationId,
+  DestinationPlan,
   DriveRow,
   PickedFolder,
   Rule,
@@ -241,6 +242,16 @@ export const forgetDrive = (id: VolumeId): Promise<void> =>
 /** A rule's run history, newest first. */
 export const listRuns = (rule: RuleId, limit: number): Promise<Run[]> =>
   call<Run[]>("list_runs", { rule, limit });
+
+/**
+ * What running a rule would do, per destination, without doing any of it.
+ *
+ * A dry run down the same code path a real run takes. Destinations whose
+ * drive is not attached come back as `unavailable` rather than failing the
+ * whole preview.
+ */
+export const planRun = (id: RuleId): Promise<DestinationPlan[]> =>
+  call<DestinationPlan[]>("plan_run", { id });
 
 /**
  * Runs `onChange` whenever the set of attached drives changes.
