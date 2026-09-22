@@ -19,7 +19,7 @@ tempfile = "3"
 thiserror = "2"
 tracing = "0.1"
 walkdir = "2"
-ts-rs = "11"
+ts-rs = "12"
 
 [workspace.lints.rust]
 unsafe_code = "deny"
