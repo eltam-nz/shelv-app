@@ -242,7 +242,13 @@ fn index_destination(
 
     let walk = walkdir::WalkDir::new(fs.long_path(root))
         .max_depth(MAX_DEPTH)
-        .follow_links(false);
+        .follow_links(false)
+        .into_iter()
+        // Shelv's own trash folder is not part of the backup. Indexing it
+        // would make every previously deleted file look extraneous, so the
+        // next mirror run would move the trash into the trash, and the run
+        // after that would do it again.
+        .filter_entry(|entry| entry.file_name() != crate::engine::trash::TRASH_DIR);
 
     for entry in walk {
         // An unreadable entry on the *destination* side is not a reason to

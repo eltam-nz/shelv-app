@@ -46,6 +46,8 @@ export type { SpaceInfo } from "./SpaceInfo";
 export type { StoredVolume } from "./StoredVolume";
 export type { Tag } from "./Tag";
 export type { TagId } from "./TagId";
+export type { TrashFailure } from "./TrashFailure";
+export type { TrashReport } from "./TrashReport";
 export type { VolumeId } from "./VolumeId";
 export type { VolumeIdentity } from "./VolumeIdentity";
 export type { VolumeIdentityKind } from "./VolumeIdentityKind";

@@ -14,6 +14,8 @@
 
 pub mod copier;
 pub mod planner;
+pub mod stamp;
+pub mod trash;
 
 use serde::{Deserialize, Serialize};
 

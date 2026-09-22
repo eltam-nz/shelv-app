@@ -194,6 +194,40 @@ back through the `CopyObserver` trait rather than a channel, because
 `shelv-core` owns no runtime; the shell implements it and throttles the
 calls into events.
 
+### Removing what the source no longer has
+
+`engine::trash` is the only code in Shelv that takes a file away from
+someone, which is why it is a module of its own rather than a branch inside
+the copier.
+
+Nothing in it unlinks. A mirror deletion is a **move** into
+`<destination>/.shelv-trash/<timestamp>/`, keeping the file's path within the
+backup, so undoing a mistake is a matter of moving a folder back. The trash
+folder is on the destination volume, so the move is a rename: it costs
+nothing and it cannot half-succeed. There is no copy-then-delete fallback —
+if the rename fails, the file stays where it is and the run says so.
+
+This departs from `docs/PLAN.md` §4 T4, which asked for the Recycle Bin.
+Windows commonly has the per-volume recycle bin disabled on removable
+drives, and `IFileOperation` then deletes permanently, which is the precise
+outcome the recycle bin was chosen to prevent; backup destinations are
+overwhelmingly removable drives. `PlatformFs::trash` remains on the trait and
+still refuses on both platforms, so nothing can reach the permanent path by
+accident.
+
+**The trash folder is excluded from the planner's destination index.** Left
+in, every previously deleted file would look extraneous, so the next run
+would move the trash into the trash and the run after that would do it
+again. The test for this is verified to fail when the exclusion is removed.
+
+One folder per run, named in UTC by `engine::stamp` — `2025-09-22T073412Z`.
+Local time would read more naturally and would mean carrying a timezone
+database and a rule for the hour that happens twice each autumn; two folders
+from one evening that sort into the wrong order, or collide, is the worse
+failure. The `Z` is there so nobody has to guess. Nothing prunes the trash
+yet: retention is M3, and a trash folder that quietly emptied itself before
+then would be the same mistake as deleting outright, only later.
+
 ## Volume identity
 
 The single most important decision in the data model, because getting it wrong
