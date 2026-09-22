@@ -348,7 +348,7 @@ const columns = [
   columnHelper.display({
     id: "actions",
     header: "",
-    size: 155,
+    size: 128,
     cell: (ctx) => (
       <div className="flex flex-col items-stretch gap-1.5 text-xs whitespace-nowrap">
         <BackupNowButton ctx={ctx} />
@@ -406,15 +406,13 @@ function BackupNowButton({ ctx }: { ctx: CellContext<RuleRow, unknown> }) {
         ctx.table.options.meta?.onBackUp?.(row);
       }}
       title={title}
-      className="w-full rounded border px-2 py-1 text-center"
+      className={`w-full rounded border px-2 py-1 text-center ${
+        disabled ? "" : "btn-soft"
+      }`}
       style={
         disabled
           ? { borderColor: "var(--border)", color: "var(--fg-muted)", opacity: 0.6 }
-          : {
-              borderColor: "transparent",
-              color: "var(--accent-blue)",
-              backgroundColor: "var(--accent-blue-fill)",
-            }
+          : { borderColor: "transparent" }
       }
     >
       {isThisRule ? "Backing up…" : "Backup Now"}
@@ -506,8 +504,7 @@ export function RuleTable({
           <button
             type="button"
             onClick={onCreate}
-            className="mt-4 rounded px-3 py-1 font-medium"
-            style={{ color: "var(--bg)", backgroundColor: "var(--accent-blue)" }}
+            className="btn-primary mt-4 rounded px-3 py-1 font-medium"
           >
             New rule
           </button>

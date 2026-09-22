@@ -41,6 +41,39 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* The two buttons that *do* something, rather than toggling something.
+   Written here rather than as inline styles so they can have a hover state
+   at all: a button that looks identical under the pointer gives no sign it
+   is a button until it is pressed.
+
+   `color-mix` rather than a second hard-coded colour, so the hover follows
+   the palette and cannot drift from the token the contrast check verifies.
+   Both stay well clear of the 4.5:1 minimum, since each moves its own
+   background further from the text it carries, not towards it. */
+.btn-primary {
+  background: var(--accent-blue);
+  color: var(--bg);
+}
+
+.btn-primary:hover {
+  background: color-mix(in srgb, var(--accent-blue) 80%, white);
+}
+
+.btn-soft {
+  background: var(--accent-blue-fill);
+  color: var(--accent-blue);
+}
+
+.btn-soft:hover {
+  background: color-mix(in srgb, var(--accent-blue) 26%, transparent);
+}
+
+/* Disabled wins: a row whose rule cannot run must not light up under the
+   pointer as though it could. */
+.btn-soft:disabled:hover {
+  background: transparent;
+}
+
 /* One visible focus style everywhere. The ring clears 3:1 (WCAG 1.4.11);
    removing it would leave keyboard users with no position indicator. */
 :focus-visible {

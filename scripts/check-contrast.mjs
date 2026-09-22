@@ -142,6 +142,16 @@ checks.push({
   min: 4.5,
 });
 
+// The rule table marks a blocked destination with a glyph on the plain
+// table background rather than in a chip. Small text, so it wants the
+// 4.5:1 body minimum, not the 3:1 for a boundary.
+checks.push({
+  label: "blocked mark on bg (rule table)",
+  fg: colour("accent-rose"),
+  bg,
+  min: 4.5,
+});
+
 // Each accent is used as chip text over a translucent chip fill of the same
 // hue, which itself sits on a surface. Check the real composited pair, not
 // the accent against the bare background — that would flatter it.

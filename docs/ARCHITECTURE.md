@@ -434,6 +434,13 @@ Three things in the rule table are decided rather than default:
   marking those too teaches the eye to skip exactly the marks that matter.
   The drives pane still spells every state out in full, which is where
   someone goes when a mark prompts a question.
+- **Every mark is the blocked colour, `Disconnected` included** — grey in
+  its pill, rose here. The two places answer different questions. The drives
+  pane is an inventory, where a drive that is not plugged in is a neutral
+  fact about that drive; the rule table answers "can this back up?", and
+  there an unplugged destination is the rule not running. Grey would let it
+  recede into the em dashes and italic paths around it. The glyphs and the
+  hover text still separate "plug it in" from "this is the wrong disk".
 - **The pinned actions column is set apart by surface, not by a rule.** It
   sits on `--surface` against the table's `--bg`, with an ordinary
   `--border` edge. It previously used `--border-strong`, which is sized for
@@ -442,6 +449,15 @@ Three things in the rule table are decided rather than default:
 - **Backup Now is a filled button; Edit Rule is not.** One of them writes to
   a disk. Disabled keeps the button's shape and drops the fill, so a row
   that cannot run still reads as a row that has the button.
+
+The two buttons that *do* something rather than toggling something —
+Backup Now and New rule — carry their hover state as `.btn-soft` and
+`.btn-primary` in `global.css` rather than as inline styles, because an
+inline style cannot have one. Each hover is a `color-mix` off the same
+token, so it follows the palette instead of introducing a colour the
+contrast check has never seen, and a disabled Backup Now stays inert: a row
+whose rule cannot run must not light up under the pointer as though it
+could.
 
 Deleting a rule lives in the editor's footer, at the opposite end from Save,
 and opens a confirmation. Not in the table: a row already carries an action

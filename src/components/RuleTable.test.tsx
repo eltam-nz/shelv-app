@@ -229,6 +229,17 @@ describe("RuleTable", () => {
     expect(cell?.className).not.toContain("sticky");
   });
 
+  it("marks an unplugged drive as blocking, not as neutral", () => {
+    // Grey is what the em dashes and the italic paths around it are. In a
+    // table answering "can this back up?", a destination that is not there
+    // is the rule not running, and it should not recede into that.
+    render(<RuleTable rows={sampleRows()} />);
+
+    const mark = screen.getAllByText("Disconnected")[0]?.closest("[title]");
+    expect(mark).not.toBeNull();
+    expect(mark?.getAttribute("style")).toContain("--status-mismatch");
+  });
+
   it("shows no mark at all on a destination that is ready", () => {
     // Nearly every row is available. Marking those too would teach the eye
     // to skip exactly the marks that matter.
@@ -273,6 +284,19 @@ describe("RuleTable", () => {
     await user.click(first);
 
     expect(started).toHaveLength(1);
+  });
+
+  it("lights Backup Now under the pointer only where it can run", () => {
+    // A button that looks identical under the pointer gives no sign it is a
+    // button until it is pressed — and one that lights up on a rule that
+    // cannot run says the opposite of the truth.
+    const rows = sampleRows();
+    render(<RuleTable rows={rows} onBackUp={() => undefined} />);
+
+    for (const button of screen.getAllByRole("button", { name: "Backup Now" })) {
+      const hoverable = button.className.includes("btn-soft");
+      expect(hoverable).toBe(!(button as HTMLButtonElement).disabled);
+    }
   });
 
   it("refuses every rule while one backup is already running", () => {

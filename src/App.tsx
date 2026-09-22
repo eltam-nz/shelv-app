@@ -312,11 +312,7 @@ export function App() {
               onClick={() => {
                 setPanel({ kind: "new-rule" });
               }}
-              className="rounded px-3 py-1 text-xs font-medium"
-              style={{
-                color: "var(--bg)",
-                backgroundColor: "var(--accent-blue)",
-              }}
+              className="btn-primary rounded px-3 py-1 text-xs font-medium"
             >
               New rule
             </button>
