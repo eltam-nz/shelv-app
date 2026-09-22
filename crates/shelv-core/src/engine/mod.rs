@@ -126,6 +126,43 @@ pub struct RunSummary {
     pub skipped: Option<String>,
 }
 
+/// What the window is told while a run is going.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
+#[ts(export, export_to = "../../../src/types/")]
+pub struct RunProgress {
+    /// The rule being run.
+    pub rule: RuleId,
+    /// The file being copied, relative to the source root. Shown, not used
+    /// to resolve anything.
+    pub file: String,
+    /// Files finished so far.
+    #[ts(type = "number")]
+    pub files_done: u64,
+    /// Files the plan holds in total, across the destinations planned so
+    /// far.
+    #[ts(type = "number")]
+    pub files_total: u64,
+    /// Bytes written so far.
+    #[ts(type = "number")]
+    pub bytes_done: u64,
+    /// Bytes the plan holds in total.
+    #[ts(type = "number")]
+    pub bytes_total: u64,
+}
+
+/// What the window is told when a run stops.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
+#[ts(export, export_to = "../../../src/types/")]
+pub struct RunFinished {
+    /// The rule that ran.
+    pub rule: RuleId,
+    /// One entry per destination, in the rule's order.
+    pub summaries: Vec<RunSummary>,
+    /// Why the run could not be attempted at all. The summaries are empty
+    /// when this is set.
+    pub error: Option<String>,
+}
+
 /// Runs a rule against every destination whose drive is attached.
 ///
 /// Writes to disk. Everything it does is decided from the database by id —

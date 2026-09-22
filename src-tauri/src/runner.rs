@@ -15,8 +15,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use serde::{Deserialize, Serialize};
-use shelv_core::engine::{CopyObserver, RunSummary};
+use shelv_core::engine::{CopyObserver, RunFinished, RunProgress};
 use shelv_core::model::{RuleId, RunTrigger};
 use tauri::{AppHandle, Emitter, Manager, Runtime};
 
@@ -35,43 +34,6 @@ pub const RUN_FINISHED: &str = "shelv://run-finished";
 /// time serialising them rather than copying. Ten a second is faster than
 /// anyone can read and slow enough to cost nothing.
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
-
-/// What the window is told while a run is going.
-#[derive(Debug, Clone, Serialize, Deserialize, ts_rs::TS)]
-#[ts(export, export_to = "../../src/types/")]
-pub struct RunProgress {
-    /// The rule being run.
-    pub rule: RuleId,
-    /// The file being copied, relative to the source root. Shown, not used
-    /// to resolve anything.
-    pub file: String,
-    /// Files finished so far.
-    #[ts(type = "number")]
-    pub files_done: u64,
-    /// Files the plan holds in total, across the destinations planned so
-    /// far.
-    #[ts(type = "number")]
-    pub files_total: u64,
-    /// Bytes written so far.
-    #[ts(type = "number")]
-    pub bytes_done: u64,
-    /// Bytes the plan holds in total.
-    #[ts(type = "number")]
-    pub bytes_total: u64,
-}
-
-/// What the window is told when a run stops.
-#[derive(Debug, Clone, Serialize, Deserialize, ts_rs::TS)]
-#[ts(export, export_to = "../../src/types/")]
-pub struct RunFinished {
-    /// The rule that ran.
-    pub rule: RuleId,
-    /// One entry per destination, in the rule's order.
-    pub summaries: Vec<RunSummary>,
-    /// Why the run could not be attempted at all. The summaries are empty
-    /// when this is set.
-    pub error: Option<String>,
-}
 
 /// The run currently going, if any.
 #[derive(Debug, Default)]
