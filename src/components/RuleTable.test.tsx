@@ -42,7 +42,6 @@ describe("RuleTable", () => {
       "Rule",
       "Source",
       "Destination",
-      "Status",
       "Type",
       "Compression",
       "Frequency",
@@ -71,7 +70,7 @@ describe("RuleTable", () => {
 
     // What the simple view keeps is everything that answers "is my data safe
     // right now?".
-    for (const kept of ["Destination", "Status", "Last Result"]) {
+    for (const kept of ["Destination", "Last Result"]) {
       expect(
         screen.getByRole("columnheader", { name: new RegExp(kept, "i") }),
       ).toBeInTheDocument();
@@ -168,7 +167,9 @@ describe("RuleTable", () => {
     // wrong disk (docs/PLAN.md §1.1a).
     const mismatch = screen.getByText("Different drive");
     expect(mismatch).toBeInTheDocument();
-    expect(mismatch.closest("span")).toHaveAttribute(
+    // The word is the screen-reader label inside the mark; the explanation
+    // is the mark's own title, which is what hovering it shows.
+    expect(mismatch.closest("[title]")).toHaveAttribute(
       "title",
       expect.stringContaining("not the same drive"),
     );
@@ -191,7 +192,7 @@ describe("RuleTable", () => {
 
     const pill = screen.getByText("Unidentified");
     expect(pill).toBeInTheDocument();
-    expect(pill.closest("span")).toHaveAttribute(
+    expect(pill.closest("[title]")).toHaveAttribute(
       "title",
       expect.stringContaining("does not report anything that identifies it"),
     );
@@ -206,11 +207,44 @@ describe("RuleTable", () => {
   it("does not convey status by colour alone", () => {
     render(<RuleTable rows={sampleRows()} />);
 
-    // Every status pill must carry a word, so the table survives greyscale
-    // and colour blindness.
-    for (const label of ["Available", "Disconnected", "Refused", "Different drive"]) {
+    // The mark beside a drive name is a glyph and a colour on screen, but
+    // the word travels with it — so the table survives greyscale, colour
+    // blindness and a screen reader.
+    for (const label of ["Disconnected", "Refused", "Different drive"]) {
       expect(screen.getAllByText(label).length).toBeGreaterThan(0);
     }
+  });
+
+  it("marks a drive's state beside its name rather than in a column", () => {
+    // The state belongs next to the thing whose state it is, and the drives
+    // pane already spells every one of them out in full.
+    render(<RuleTable rows={sampleRows()} />);
+
+    const mark = screen.getAllByText("Disconnected")[0];
+    expect(mark).toBeDefined();
+    const cell = mark?.closest("td");
+    expect(cell).not.toBeNull();
+    // The same cell holds the drive's name, which is what "beside" means.
+    expect(cell?.textContent).toContain("Disconnected");
+    expect(cell?.className).not.toContain("sticky");
+  });
+
+  it("marks an unplugged drive as blocking, not as neutral", () => {
+    // Grey is what the em dashes and the italic paths around it are. In a
+    // table answering "can this back up?", a destination that is not there
+    // is the rule not running, and it should not recede into that.
+    render(<RuleTable rows={sampleRows()} />);
+
+    const mark = screen.getAllByText("Disconnected")[0]?.closest("[title]");
+    expect(mark).not.toBeNull();
+    expect(mark?.getAttribute("style")).toContain("--status-mismatch");
+  });
+
+  it("shows no mark at all on a destination that is ready", () => {
+    // Nearly every row is available. Marking those too would teach the eye
+    // to skip exactly the marks that matter.
+    render(<RuleTable rows={sampleRows()} />);
+    expect(screen.queryByText("Available")).not.toBeInTheDocument();
   });
 
   it("offers Backup Now only for rules that could actually run", () => {
@@ -250,6 +284,19 @@ describe("RuleTable", () => {
     await user.click(first);
 
     expect(started).toHaveLength(1);
+  });
+
+  it("lights Backup Now under the pointer only where it can run", () => {
+    // A button that looks identical under the pointer gives no sign it is a
+    // button until it is pressed — and one that lights up on a rule that
+    // cannot run says the opposite of the truth.
+    const rows = sampleRows();
+    render(<RuleTable rows={rows} onBackUp={() => undefined} />);
+
+    for (const button of screen.getAllByRole("button", { name: "Backup Now" })) {
+      const hoverable = button.className.includes("btn-soft");
+      expect(hoverable).toBe(!(button as HTMLButtonElement).disabled);
+    }
   });
 
   it("refuses every rule while one backup is already running", () => {
@@ -377,10 +424,12 @@ describe("RuleTable", () => {
       expect(cell).not.toBeNull();
       expect(cell?.className).toContain("sticky");
       expect(cell?.className).toContain("right-0");
-      // Opaque, or the columns scrolling past would show through it, and
-      // bordered, so it reads as its own panel rather than a stuck cell.
-      expect(cell?.className).toContain("bg-bg");
+      // Opaque, or the columns scrolling past would show through it. It is
+      // set apart by sitting on the raised surface rather than by a bright
+      // rule down its edge.
+      expect(cell?.className).toContain("bg-surface");
       expect(cell?.className).toContain("border-l");
+      expect(cell?.className).not.toContain("border-border-strong");
     }
   });
 });

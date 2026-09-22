@@ -22,11 +22,15 @@
  * as one that might.
  */
 
+import type { Availability } from "../types";
+import { AvailabilityMark } from "./StatusPill";
+
 /** Where a backup goes, in terms the reader can act on. */
 export function DriveLocation({
   name,
   relative,
   mount,
+  availability,
 }: {
   /** The drive's name: the user's nickname where they set one. Never empty. */
   name: string;
@@ -34,6 +38,12 @@ export function DriveLocation({
   relative: string;
   /** Where the drive is mounted right now, or `null` if it is not attached. */
   mount: string | null;
+  /**
+   * Whether the drive can be written to. Shown as a mark beside the name
+   * rather than in a column of its own: a state belongs next to the thing
+   * whose state it is, and `Available` — nearly every row — shows nothing.
+   */
+  availability?: Availability;
 }) {
   const connected = mount !== null && mount !== "";
   // The letter is worth showing — it is how you would find the drive in
@@ -45,8 +55,11 @@ export function DriveLocation({
 
   return (
     <div className="min-w-0">
-      <div className={`truncate ${connected ? "" : "text-fg-muted"}`} title={title}>
-        {heading}
+      <div className={`flex items-center gap-1.5 ${connected ? "" : "text-fg-muted"}`}>
+        <span className="truncate" title={title}>
+          {heading}
+        </span>
+        {availability !== undefined && <AvailabilityMark availability={availability} />}
       </div>
       <div className="truncate text-[11px] text-fg-muted italic" title={path}>
         {path}

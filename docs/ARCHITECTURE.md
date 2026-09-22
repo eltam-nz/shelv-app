@@ -118,7 +118,10 @@ part of a destination at all, and is shown only while the drive is attached.
 
 A resizable split below the rules table, toggled from the top bar, listing
 every **recorded** drive with its nickname, Explorer label, current letter,
-availability and how many rules use it. Attached-but-unrecorded drives are
+availability and how many **rules** use it — distinct rules, counted through
+a `UNION`, not appearances. A rule copying one folder on a drive to another
+folder on the same drive touches it twice, and adding those up reads as
+"2 rules" when there is one. Attached-but-unrecorded drives are
 deliberately not enumerated: **Add drive…** opens the same native picker
 every other location goes through, which is the OS's own consent step, so
 there is only ever one way a drive enters Shelv. Forgetting a drive is
@@ -422,6 +425,44 @@ React 19, TypeScript in strict mode, Vite, Tailwind v4, TanStack Table v8.
 
 v8 is pinned deliberately: v9 is a redesign around atoms and explicit feature
 composition, and v8 is sufficient for a table of this shape.
+
+Three things in the rule table are decided rather than default:
+
+- **A drive's state shows beside its name**, as a glyph with the word
+  carried in a `sr-only` span and in the title, not in a column of its own.
+  `Available` renders nothing at all: nearly every row is available, and
+  marking those too teaches the eye to skip exactly the marks that matter.
+  The drives pane still spells every state out in full, which is where
+  someone goes when a mark prompts a question.
+- **Every mark is the blocked colour, `Disconnected` included** — grey in
+  its pill, rose here. The two places answer different questions. The drives
+  pane is an inventory, where a drive that is not plugged in is a neutral
+  fact about that drive; the rule table answers "can this back up?", and
+  there an unplugged destination is the rule not running. Grey would let it
+  recede into the em dashes and italic paths around it. The glyphs and the
+  hover text still separate "plug it in" from "this is the wrong disk".
+- **The pinned actions column is set apart by surface, not by a rule.** It
+  sits on `--surface` against the table's `--bg`, with an ordinary
+  `--border` edge. It previously used `--border-strong`, which is sized for
+  controls that must clear 3:1 and drew the eye to a border rather than to
+  the rows.
+- **Backup Now is a filled button; Edit Rule is not.** One of them writes to
+  a disk. Disabled keeps the button's shape and drops the fill, so a row
+  that cannot run still reads as a row that has the button.
+
+The two buttons that *do* something rather than toggling something —
+Backup Now and New rule — carry their hover state as `.btn-soft` and
+`.btn-primary` in `global.css` rather than as inline styles, because an
+inline style cannot have one. Each hover is a `color-mix` off the same
+token, so it follows the palette instead of introducing a colour the
+contrast check has never seen, and a disabled Backup Now stays inert: a row
+whose rule cannot run must not light up under the pointer as though it
+could.
+
+Deleting a rule lives in the editor's footer, at the opposite end from Save,
+and opens a confirmation. Not in the table: a row already carries an action
+per rule, and a third would put a destructive button beside Backup Now on
+every line.
 
 Colour lives in `src/styles/theme.css` as custom properties and nowhere else.
 `scripts/check-contrast.mjs` reads that file, composites each translucent chip

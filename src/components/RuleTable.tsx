@@ -24,7 +24,7 @@ import type {
   TagId,
   VolumeStatus,
 } from "../types";
-import { AvailabilityPill, RunResultPill } from "./StatusPill";
+import { RunResultPill } from "./StatusPill";
 
 declare module "@tanstack/react-table" {
   // Lets a cell reach the callbacks without threading them through every
@@ -163,6 +163,7 @@ function Location({ status, relative }: { status: VolumeStatus; relative: string
         name={volumeName(status)}
         relative={relative}
         mount={status.mount_point}
+        availability={status.availability}
       />
     </div>
   );
@@ -207,19 +208,7 @@ const columns = [
     size: 250,
     cell: (ctx) => {
       const row = ctx.row.original;
-      return (
-        <span className="flex items-start gap-2">
-          <span className="min-w-0 flex-1">
-            <Location status={row.source} relative={row.rule.spec.source.relative} />
-          </span>
-          {/* A missing source is as blocking as a missing destination, and the
-              mock-up has nowhere to show it. Flag it inline rather than
-              leaving the row looking runnable. */}
-          {row.source.availability !== "available" && (
-            <AvailabilityPill availability={row.source.availability} />
-          )}
-        </span>
-      );
+      return <Location status={row.source} relative={row.rule.spec.source.relative} />;
     },
   }),
 
@@ -240,25 +229,6 @@ const columns = [
               status={d.status}
               relative={d.destination.path.relative}
             />
-          ))}
-        </div>
-      );
-    },
-  }),
-
-  columnHelper.display({
-    id: "availability",
-    header: "Status",
-    size: 125,
-    cell: (ctx) => {
-      const { destinations } = ctx.row.original;
-      if (destinations.length === 0) return <span className="text-fg-muted">—</span>;
-      return (
-        <div>
-          {destinations.map((d) => (
-            <div key={d.destination.id} className={DESTINATION_ENTRY}>
-              <AvailabilityPill availability={d.status.availability} />
-            </div>
           ))}
         </div>
       );
@@ -378,16 +348,16 @@ const columns = [
   columnHelper.display({
     id: "actions",
     header: "",
-    size: 155,
+    size: 128,
     cell: (ctx) => (
-      <div className="flex flex-col items-start gap-1 text-xs whitespace-nowrap">
+      <div className="flex flex-col items-stretch gap-1.5 text-xs whitespace-nowrap">
         <BackupNowButton ctx={ctx} />
         <button
           type="button"
           onClick={() => {
             ctx.table.options.meta?.onEdit?.(ctx.row.original);
           }}
-          className="text-accent-blue underline-offset-2 hover:underline"
+          className="text-center text-fg-muted underline-offset-2 hover:text-fg hover:underline"
         >
           Edit Rule
         </button>
@@ -424,6 +394,10 @@ function BackupNowButton({ ctx }: { ctx: CellContext<RuleRow, unknown> }) {
         ? "Copy this rule's source to every destination that is attached"
         : "This rule cannot run: its source, or every destination, is unavailable";
 
+  // A filled button, not a link: this is the one control in the row that
+  // does something to the disk, and it should not look like the text beside
+  // it. Disabled keeps the shape and drops the fill, so a row where it
+  // cannot run still reads as a row that has the button.
   return (
     <button
       type="button"
@@ -432,10 +406,13 @@ function BackupNowButton({ ctx }: { ctx: CellContext<RuleRow, unknown> }) {
         ctx.table.options.meta?.onBackUp?.(row);
       }}
       title={title}
-      className={
+      className={`w-full rounded border px-2 py-1 text-center ${
+        disabled ? "" : "btn-soft"
+      }`}
+      style={
         disabled
-          ? "cursor-not-allowed text-fg-muted opacity-40"
-          : "text-accent-blue underline-offset-2 hover:underline"
+          ? { borderColor: "var(--border)", color: "var(--fg-muted)", opacity: 0.6 }
+          : { borderColor: "transparent" }
       }
     >
       {isThisRule ? "Backing up…" : "Backup Now"}
@@ -466,7 +443,7 @@ function isRunnable(row: RuleRow): boolean {
  * visually and stays put while the rest of the table scrolls underneath —
  * which it does, since the detailed view is far wider than any window.
  */
-const STICKY_CELL = "sticky right-0 z-20 border-l border-border-strong";
+const STICKY_CELL = "sticky right-0 z-20 border-l border-border";
 
 export function RuleTable({
   rows,
@@ -527,11 +504,7 @@ export function RuleTable({
           <button
             type="button"
             onClick={onCreate}
-            className="mt-4 rounded px-3 py-1"
-            style={{
-              color: "var(--accent-blue)",
-              backgroundColor: "var(--accent-blue-fill)",
-            }}
+            className="btn-primary mt-4 rounded px-3 py-1 font-medium"
           >
             New rule
           </button>
@@ -575,8 +548,8 @@ export function RuleTable({
                         ? "descending"
                         : undefined
                   }
-                  className={`sticky top-0 z-10 border-b border-border bg-bg px-3 py-2 text-xs font-medium tracking-wide text-fg-muted uppercase ${
-                    pinned ? `${STICKY_CELL} z-30` : ""
+                  className={`sticky top-0 z-10 border-b border-border px-3 py-2 text-xs font-medium tracking-wide text-fg-muted uppercase ${
+                    pinned ? `${STICKY_CELL} z-30 bg-surface` : "bg-bg"
                   }`}
                 >
                   {sortable ? (
@@ -610,8 +583,15 @@ export function RuleTable({
               return (
                 <td
                   key={cell.id}
-                  className={`overflow-hidden border-b border-border bg-bg px-3 py-2 align-top group-hover:bg-surface ${
-                    pinned ? STICKY_CELL : ""
+                  // The pinned column is set apart by sitting on the raised
+                  // surface rather than by a bright rule down its edge: it
+                  // reads as a shelf the actions live on, which is what it
+                  // is, and a high-contrast line there drew the eye to a
+                  // border instead of to the rows.
+                  className={`overflow-hidden border-b border-border px-3 py-2 align-top ${
+                    pinned
+                      ? `${STICKY_CELL} bg-surface group-hover:bg-surface-raised`
+                      : "bg-bg group-hover:bg-surface"
                   }`}
                 >
                   {flexRender(cell.column.columnDef.cell, cell.getContext())}

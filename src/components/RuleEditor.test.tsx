@@ -111,3 +111,36 @@ describe("RuleEditor destinations", () => {
     expect(await screen.findByText("Unnamed drive 1A2B3C4D (E:)")).toBeInTheDocument();
   });
 });
+
+describe("RuleEditor deletion", () => {
+  it("offers a way to delete the rule being edited", async () => {
+    // Deleting had no route to it at all: the confirmation dialog existed
+    // and nothing ever opened it. A rule someone can create and cannot
+    // remove is a rule they have to edit into something harmless instead.
+    const user = userEvent.setup();
+    const asked: string[] = [];
+    const row = sampleRows()[0];
+    expect(row).toBeDefined();
+    if (!row) return;
+
+    render(
+      <RuleEditor
+        existing={row}
+        tags={[]}
+        onClose={noop}
+        onSaved={noop}
+        onDelete={(r) => asked.push(r.rule.spec.name)}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Delete rule" }));
+
+    // It asks rather than deletes: the confirmation is the caller's.
+    expect(asked).toEqual([row.rule.spec.name]);
+  });
+
+  it("does not offer to delete a rule that does not exist yet", () => {
+    render(<RuleEditor tags={[]} onClose={noop} onSaved={noop} onDelete={noop} />);
+    expect(screen.queryByRole("button", { name: "Delete rule" })).not.toBeInTheDocument();
+  });
+});
