@@ -17,6 +17,7 @@
               State is a cheap reference wrapper"
 )]
 
+use std::path::PathBuf;
 use std::sync::Mutex;
 
 use shelv_core::engine::{plan_rule, DestinationPlan};
@@ -37,16 +38,41 @@ use tauri_plugin_dialog::DialogExt;
 pub struct AppState {
     store: Mutex<Store>,
     fs: Box<dyn PlatformFs>,
+    /// Where the database lives, so a run can open its own connection.
+    db_path: PathBuf,
+    /// The backup currently running, if any.
+    pub runner: crate::runner::Runner,
 }
 
 impl AppState {
     /// Builds the state around an already-open store.
     #[must_use]
-    pub fn new(store: Store, fs: Box<dyn PlatformFs>) -> Self {
+    pub fn new(store: Store, fs: Box<dyn PlatformFs>, db_path: PathBuf) -> Self {
         Self {
             store: Mutex::new(store),
             fs,
+            db_path,
+            runner: crate::runner::Runner::default(),
         }
+    }
+
+    /// Runs a rule, on the calling thread.
+    ///
+    /// Opens its **own** database connection rather than taking the one the
+    /// commands share. A backup takes minutes, and holding that lock for the
+    /// length of one would freeze every command behind it — the rule table
+    /// would stop answering while the backup it is showing runs. `SQLite` is
+    /// in WAL mode with a busy timeout, so a second connection is the
+    /// ordinary way to do this; the run writes two rows, at the start and at
+    /// the end.
+    pub fn run(
+        &self,
+        rule: RuleId,
+        trigger: shelv_core::model::RunTrigger,
+        observer: &dyn shelv_core::engine::CopyObserver,
+    ) -> Result<Vec<shelv_core::engine::RunSummary>> {
+        let store = Store::open(&self.db_path)?;
+        shelv_core::engine::run_rule(&store, self.fs.as_ref(), rule, trigger, &now, observer)
     }
 
     /// Runs one watcher tick against the store.
@@ -363,6 +389,39 @@ fn plan_run(state: State<'_, AppState>, id: RuleId) -> Result<Vec<DestinationPla
     state.with_store(|store| plan_rule(store, state.fs.as_ref(), id, now()))
 }
 
+/// Starts a backup, on a background thread.
+///
+/// Returns as soon as the run has started, not when it finishes: a copy
+/// takes minutes and a command that waited would freeze the window.
+/// Progress arrives as `shelv://run-progress` and the outcome as
+/// `shelv://run-finished`.
+///
+/// Refused while another backup is running, so two runs cannot write to one
+/// drive at once.
+#[tauri::command]
+fn run_rule<R: Runtime>(app: AppHandle<R>, id: RuleId) -> Result<()> {
+    crate::runner::start(&app, id)
+}
+
+/// Asks the running backup to stop.
+///
+/// It stops between files, and within a large file between chunks. Nothing
+/// is left half-written: every file is written to a temporary name and
+/// renamed into place, so a cancelled run leaves the destination as it was.
+#[tauri::command]
+fn cancel_run(state: State<'_, AppState>) {
+    state.runner.cancel();
+}
+
+/// The rule currently being backed up, if any.
+///
+/// Asked on mount, so reloading the window mid-run shows the run rather than
+/// an idle table.
+#[tauri::command]
+fn running_rule(state: State<'_, AppState>) -> Option<RuleId> {
+    state.runner.running()
+}
+
 /// A rule's raw configuration, for the editor.
 #[tauri::command]
 fn get_rule_spec(state: State<'_, AppState>, id: RuleId) -> Result<Rule> {
@@ -459,5 +518,8 @@ pub fn handlers<R: Runtime>() -> impl Fn(Invoke<R>) -> bool + Send + Sync + 'sta
         forget_drive,
         list_runs,
         plan_run,
+        run_rule,
+        cancel_run,
+        running_rule,
     ]
 }

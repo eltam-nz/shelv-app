@@ -95,6 +95,15 @@ impl CopyReport {
 /// prepared for concurrent calls and must not block for long — a slow
 /// observer slows the backup.
 pub trait CopyObserver: Sync {
+    /// The plan for one destination is known: this many files, this many
+    /// bytes.
+    ///
+    /// Called once per destination rather than once per run, because the
+    /// plan is made per destination — a rule aimed at two drives has two of
+    /// them, and the totals a progress bar shows grow as the run moves from
+    /// one to the next.
+    fn planned(&self, _files: u64, _bytes: u64) {}
+
     /// A file is about to be written.
     fn file_started(&self, _relative: &Path, _bytes: u64) {}
 

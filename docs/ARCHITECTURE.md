@@ -258,6 +258,36 @@ Retention is M3, so snapshots accumulate. The editor already says pruning is
 governed by the retention setting, which must not be read as saying it is
 happening yet.
 
+### Backup Now
+
+The engine is synchronous and knows nothing of Tauri. `src-tauri/src/runner.rs`
+is what gives it a thread, turns its callbacks into events and lets the window
+stop it.
+
+- **One run at a time**, app-wide. Two runs could otherwise write to one drive
+  at once, and a second Backup Now on a rule already running would copy the
+  same tree twice. The scheduler in M3 will queue per volume; until then
+  refusing the second run, and saying why, is the honest behaviour.
+- **Its own database connection.** A backup takes minutes, and holding the
+  lock the commands share for that long would freeze the rule table while it
+  shows the backup running. `SQLite` is in WAL mode with a busy timeout, so a
+  second connection is the ordinary answer; a run writes two rows, one at the
+  start and one at the end.
+- **Progress throttled to ten events a second.** A million-file run would
+  otherwise spend its time serialising events. The status bar shows counts
+  rather than a bar, because the totals grow as the run reaches each
+  destination and a bar would appear to go backwards.
+- **A preview before anything is removed.** A mirror deletes whatever its
+  source no longer has — the behaviour that was asked for, and the one that
+  destroys files when a rule points somewhere unintended. So Backup Now on a
+  rule whose plan holds deletions shows them first, by path, with where they
+  will go. A run that only copies starts immediately: a confirmation nobody
+  needs is a confirmation nobody reads.
+- **Each destination is its own history row**, because each succeeds or fails
+  on its own. A drive that was unplugged is recorded as skipped, not as a
+  failure — that is the ordinary case for a removable drive, and colouring it
+  red would train someone to ignore the colour.
+
 ## Volume identity
 
 The single most important decision in the data model, because getting it wrong

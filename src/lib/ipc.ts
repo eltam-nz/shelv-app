@@ -28,6 +28,8 @@ import type {
   RuleRow,
   RuleSpec,
   Run,
+  RunFinished,
+  RunProgress,
   Tag,
   TagId,
   VolumeId,
@@ -252,6 +254,50 @@ export const listRuns = (rule: RuleId, limit: number): Promise<Run[]> =>
  */
 export const planRun = (id: RuleId): Promise<DestinationPlan[]> =>
   call<DestinationPlan[]>("plan_run", { id });
+
+/**
+ * Starts a backup, returning as soon as it has started.
+ *
+ * The outcome does not come back here: a copy takes minutes. Listen with
+ * {@link onRunProgress} and {@link onRunFinished}. Rejects with a `refused`
+ * error if another backup is already running, or if the rule asks for a Zip.
+ */
+export const runRule = (id: RuleId): Promise<void> => callVoid("run_rule", { id });
+
+/**
+ * Asks the running backup to stop.
+ *
+ * It stops between files, and within a large file between chunks. Nothing is
+ * left half-written.
+ */
+export const cancelRun = (): Promise<void> => callVoid("cancel_run", {});
+
+/**
+ * The rule currently being backed up, if any.
+ *
+ * Asked on mount, so reloading the window mid-run shows the run rather than
+ * an idle table.
+ */
+export const runningRule = (): Promise<RuleId | null> =>
+  call<RuleId | null>("running_rule", {});
+
+/** Runs `onProgress` several times a second while a backup is going. */
+export async function onRunProgress(
+  onProgress: (progress: RunProgress) => void,
+): Promise<() => void> {
+  return listen<RunProgress>("shelv://run-progress", (event) => {
+    onProgress(event.payload);
+  });
+}
+
+/** Runs `onFinished` once when a backup stops, however it stopped. */
+export async function onRunFinished(
+  onFinished: (finished: RunFinished) => void,
+): Promise<() => void> {
+  return listen<RunFinished>("shelv://run-finished", (event) => {
+    onFinished(event.payload);
+  });
+}
 
 /**
  * Runs `onChange` whenever the set of attached drives changes.

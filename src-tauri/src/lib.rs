@@ -5,6 +5,7 @@
 //! `docs/PLAN.md` §2.2.
 
 mod commands;
+mod runner;
 mod watcher;
 
 use std::path::Path;
@@ -67,7 +68,7 @@ pub fn run() -> Result<(), StartupError> {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
-        .manage(commands::AppState::new(store, fs))
+        .manage(commands::AppState::new(store, fs, db_path))
         .setup(move |app| {
             // The window is built here rather than declared in
             // tauri.conf.json because only this path can choose where the

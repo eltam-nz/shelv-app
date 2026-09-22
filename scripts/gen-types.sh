@@ -12,6 +12,9 @@ TYPES_DIR="src/types"
 # deleted Rust type would leave its .ts behind forever.
 rm -rf "$TYPES_DIR"
 cargo test --package shelv-core --quiet export_bindings >/dev/null
+# The shell crate exports a couple of types of its own — the run events,
+# which are shaped by what the window needs rather than by the engine.
+cargo test --package shelv --quiet export_bindings >/dev/null
 
 if [ ! -d "$TYPES_DIR" ]; then
     echo "no types were generated — is the export_bindings test still present?" >&2

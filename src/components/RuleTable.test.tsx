@@ -213,33 +213,58 @@ describe("RuleTable", () => {
     }
   });
 
-  it("never offers Backup Now while the engine does not exist", () => {
-    // A button that looks operational and silently does nothing is worse
-    // than no button here: someone would believe a backup had run. Until
-    // the engine lands in M1, every one of these is disabled — including
-    // for rules that are otherwise perfectly runnable.
+  it("offers Backup Now only for rules that could actually run", () => {
+    // A button that looks operational on a rule whose drive is unplugged
+    // invites someone to believe a backup ran. Phone Photos and Documents
+    // each have a reachable destination; the other four do not.
     render(<RuleTable rows={sampleRows()} />);
     const buttons = screen.getAllByRole("button", { name: "Backup Now" });
     expect(buttons).toHaveLength(6);
-    for (const button of buttons) {
-      expect(button).toBeDisabled();
-    }
+    expect(buttons.filter((b) => !(b as HTMLButtonElement).disabled)).toHaveLength(2);
   });
 
-  it("says whether a rule could have run, separately from the engine being absent", () => {
-    // "Not built yet" and "this rule could not run anyway" are different
-    // things to know, so the reason distinguishes them even though the
-    // button is disabled either way.
+  it("says why a rule cannot be backed up right now", () => {
     render(<RuleTable rows={sampleRows()} />);
     const titles = screen
       .getAllByRole("button", { name: "Backup Now" })
       .map((b) => b.getAttribute("title") ?? "");
 
-    // Phone Photos and Documents each have a reachable destination.
-    expect(
-      titles.filter((t) => t.startsWith("Running backups is not built")),
-    ).toHaveLength(2);
-    expect(titles.filter((t) => t.startsWith("This rule could not run"))).toHaveLength(4);
+    expect(titles.filter((t) => t.startsWith("Copy this rule's source"))).toHaveLength(2);
+    expect(titles.filter((t) => t.startsWith("This rule cannot run"))).toHaveLength(4);
+  });
+
+  it("starts a backup for the row whose Backup Now was pressed", async () => {
+    const user = userEvent.setup();
+    const started: string[] = [];
+    render(
+      <RuleTable
+        rows={sampleRows()}
+        onBackUp={(row) => started.push(row.rule.spec.name)}
+      />,
+    );
+
+    const [first] = screen
+      .getAllByRole("button", { name: "Backup Now" })
+      .filter((b) => !(b as HTMLButtonElement).disabled);
+    if (first === undefined) throw new Error("no rule was offered a backup");
+    await user.click(first);
+
+    expect(started).toHaveLength(1);
+  });
+
+  it("refuses every rule while one backup is already running", () => {
+    // Shelv runs one at a time so two rules cannot write to one drive. The
+    // rule that is running says so in its own words rather than looking the
+    // same as the ones merely waiting.
+    const rows = sampleRows();
+    const [first] = rows;
+    if (first === undefined) throw new Error("the fixtures should hold rules");
+    render(<RuleTable rows={rows} running={first.rule.id} onBackUp={() => undefined} />);
+
+    expect(screen.getAllByRole("button", { name: "Backing up…" })).toHaveLength(1);
+    for (const button of screen.getAllByRole("button", { name: "Backup Now" })) {
+      expect(button).toBeDisabled();
+    }
   });
 
   it("opens the editor for the row whose Edit Rule was pressed", async () => {

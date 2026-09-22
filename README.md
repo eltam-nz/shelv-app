@@ -4,10 +4,12 @@ A local backup manager for Windows: define rules that copy folders from your
 computer to internal disks, external drives and your local OneDrive folder, on
 a schedule or when a drive is plugged in.
 
-**Status: early development.** Milestone M0 — the skeleton — is complete: the
-workspace, storage, platform abstraction, IPC surface, theme and rule table are
-in place, with CI on Windows and Linux. The backup engine itself lands in M1,
-so nothing is copied yet.
+**Status: early development.** M0 (the skeleton), M2 (rule management) and M1
+(the backup engine) are complete: Shelv copies files, mirrors deletions into a
+recoverable trash folder, writes timestamped snapshots, and runs from Backup
+Now with progress and a preview of anything it would remove. Scheduling,
+OneDrive hydration and `.zip` packaging are still to come — a rule set to
+write an archive is refused rather than quietly copying loose files.
 
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — how it is built
 - [`docs/SECURITY.md`](docs/SECURITY.md) — threat model and what is enforced

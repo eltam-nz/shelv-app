@@ -85,6 +85,9 @@ fn build_app() -> tauri::App<tauri::test::MockRuntime> {
         .manage(crate::commands::AppState::new(
             store,
             shelv_core::platform::host_fs(),
+            // Never opened: these tests exercise the IPC surface, not a
+            // backup. A run would open this path for itself.
+            std::path::PathBuf::from("shelv-tests.db"),
         ))
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
