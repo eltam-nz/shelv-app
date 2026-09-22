@@ -4,6 +4,7 @@ import {
   getCoreRowModel,
   getSortedRowModel,
   useReactTable,
+  type CellContext,
   type SortingState,
   type VisibilityState,
 } from "@tanstack/react-table";
@@ -17,6 +18,7 @@ import type {
   Packaging,
   PlaceholderPolicy,
   Retention,
+  RuleId,
   RuleRow,
   Schedule,
   TagId,
@@ -30,6 +32,9 @@ declare module "@tanstack/react-table" {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   interface TableMeta<TData> {
     onEdit: ((row: RuleRow) => void) | undefined;
+    onBackUp: ((row: RuleRow) => void) | undefined;
+    /** The rule being backed up right now, if any. */
+    running: RuleId | null;
   }
 }
 /**
@@ -376,24 +381,7 @@ const columns = [
     size: 155,
     cell: (ctx) => (
       <div className="flex flex-col items-start gap-1 text-xs whitespace-nowrap">
-        {/* Always disabled: the engine lands in M1 and nothing copies files
-            yet. A button that looks operational and silently does nothing is
-            worse than no button in a backup tool — it invites someone to
-            believe a backup ran. The reason still distinguishes "not built"
-            from "this rule could not run anyway", because those are
-            different things to know. */}
-        <button
-          type="button"
-          disabled
-          className="cursor-not-allowed text-fg-muted"
-          title={
-            isRunnable(ctx.row.original)
-              ? "Running backups is not built yet — it arrives with the backup engine. Nothing is copied at this stage."
-              : "This rule could not run in any case: the source or every destination is unavailable. Running backups is also not built yet."
-          }
-        >
-          Backup Now
-        </button>
+        <BackupNowButton ctx={ctx} />
         <button
           type="button"
           onClick={() => {
@@ -414,6 +402,47 @@ const columns = [
  * Mirrors `RuleRow::is_runnable` in the core. A rule with two destinations,
  * one unplugged, can still back up to the other.
  */
+/**
+ * Backup Now, in the one state it is currently in.
+ *
+ * Disabled for three different reasons, and the title says which: this rule
+ * cannot run, another rule is running, or this rule already is. A button
+ * that is merely grey teaches someone nothing about what to do next.
+ */
+function BackupNowButton({ ctx }: { ctx: CellContext<RuleRow, unknown> }) {
+  const row = ctx.row.original;
+  const running = ctx.table.options.meta?.running ?? null;
+  const isThisRule = running === row.rule.id;
+  const runnable = isRunnable(row);
+  const disabled = !runnable || running !== null;
+
+  const title = isThisRule
+    ? "This backup is running. Cancel it from the status bar."
+    : running !== null
+      ? "Another backup is running. Shelv runs one at a time so two rules cannot write to one drive at once."
+      : runnable
+        ? "Copy this rule's source to every destination that is attached"
+        : "This rule cannot run: its source, or every destination, is unavailable";
+
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={() => {
+        ctx.table.options.meta?.onBackUp?.(row);
+      }}
+      title={title}
+      className={
+        disabled
+          ? "cursor-not-allowed text-fg-muted opacity-40"
+          : "text-accent-blue underline-offset-2 hover:underline"
+      }
+    >
+      {isThisRule ? "Backing up…" : "Backup Now"}
+    </button>
+  );
+}
+
 function isRunnable(row: RuleRow): boolean {
   return (
     row.rule.spec.enabled &&
@@ -444,6 +473,8 @@ export function RuleTable({
   tagFilter,
   view = "simple",
   onEdit,
+  onBackUp,
+  running = null,
   onCreate,
 }: {
   rows: RuleRow[];
@@ -453,6 +484,10 @@ export function RuleTable({
   view?: ViewMode;
   /** Open the editor for a rule. */
   onEdit?: (row: RuleRow) => void;
+  /** Start a backup of a rule. */
+  onBackUp?: (row: RuleRow) => void;
+  /** The rule being backed up right now, if any. */
+  running?: RuleId | null;
   /** Start a new rule, offered from the empty state. */
   onCreate?: () => void;
 }) {
@@ -480,7 +515,7 @@ export function RuleTable({
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
     columnResizeMode: "onChange",
-    meta: { onEdit },
+    meta: { onEdit, onBackUp, running },
   });
 
   if (rows.length === 0) {

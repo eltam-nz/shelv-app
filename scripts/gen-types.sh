@@ -33,4 +33,17 @@ fi
     done
 } > "$TYPES_DIR/index.ts"
 
+# Every generated import must be a sibling. ts-rs writes each dependency's
+# import using that type's own `export_to`, so a type declared in a crate at a
+# different depth emits a path like ../../../src/types/RuleId — which resolves
+# to a folder *outside the repository*. That fails in CI and, worse, passes
+# locally once the stray folder exists, because tsc then finds it. So the
+# rule is: every ts-rs type lives in one crate, and this checks it held.
+if grep -rl 'from "\.\./' "$TYPES_DIR" >/dev/null 2>&1; then
+    echo "generated types import outside $TYPES_DIR:" >&2
+    grep -rn 'from "\.\./' "$TYPES_DIR" >&2
+    echo "every #[ts(export_to)] must resolve to $TYPES_DIR — see the note above" >&2
+    exit 1
+fi
+
 echo "generated $(find "$TYPES_DIR" -name '*.ts' | wc -l) type files"

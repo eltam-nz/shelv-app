@@ -9,18 +9,35 @@ import { SplitPane } from "./components/SplitPane";
 import { TagFilterMenu } from "./components/TagFilterMenu";
 import { TagManager } from "./components/TagManager";
 import {
+  cancelRun,
   deleteRule,
   forgetDrive,
   listDrives,
   listRules,
   listTags,
+  onRunFinished,
+  onRunProgress,
   onVolumesChanged,
   pickFolder,
+  planRun,
+  runningRule,
+  runRule,
   setDriveNickname,
   ShelvError,
 } from "./lib/ipc";
 import { retainExistingTags } from "./lib/tags";
-import type { DriveRow, RuleRow, Tag, TagId, VolumeId } from "./types";
+import { RunPreview } from "./components/RunPreview";
+import type {
+  DestinationPlan,
+  DriveRow,
+  RuleId,
+  RuleRow,
+  RunFinished,
+  RunProgress,
+  Tag,
+  TagId,
+  VolumeId,
+} from "./types";
 
 type Panel =
   | { kind: "none" }
@@ -28,7 +45,8 @@ type Panel =
   | { kind: "edit-rule"; row: RuleRow }
   | { kind: "tags" }
   | { kind: "about" }
-  | { kind: "confirm-delete"; row: RuleRow };
+  | { kind: "confirm-delete"; row: RuleRow }
+  | { kind: "preview-run"; row: RuleRow; plans: DestinationPlan[] };
 
 /**
  * Remembers a window-layout preference across sessions.
@@ -71,6 +89,9 @@ export function App() {
   const [view, setView] = useState<ViewMode>("simple");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [running, setRunning] = useState<RuleId | null>(null);
+  const [progress, setProgress] = useState<RunProgress | null>(null);
+  const [outcome, setOutcome] = useState<RunFinished | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -123,6 +144,82 @@ export function App() {
       stop?.();
     };
   }, [refresh]);
+
+  // A run outlives any one render, and the window can be reloaded while one
+  // is going, so the backend is the source of truth for whether one is.
+  useEffect(() => {
+    let stop: (() => void)[] = [];
+    let cancelled = false;
+
+    const attach = (unlisten: () => void) => {
+      if (cancelled) unlisten();
+      else stop.push(unlisten);
+    };
+
+    void runningRule()
+      .then(setRunning)
+      .catch(() => {
+        // Not knowing is the same as not running, as far as the table is
+        // concerned: the backend refuses a second run anyway.
+      });
+    void onRunProgress((next) => {
+      setRunning(next.rule);
+      setProgress(next);
+    }).then(attach);
+    void onRunFinished((finished) => {
+      setRunning(null);
+      setProgress(null);
+      setOutcome(finished);
+      // The history, the last result and the last backup time all changed.
+      void refresh();
+    }).then(attach);
+
+    return () => {
+      cancelled = true;
+      for (const unlisten of stop) unlisten();
+      stop = [];
+    };
+  }, [refresh]);
+
+  /**
+   * Starts a backup, previewing it first when it would remove files.
+   *
+   * A mirror deletes whatever its source no longer has. That is what was
+   * asked for, and it is also what destroys files when a rule points
+   * somewhere unintended, so the first look at a destructive run is a
+   * preview rather than the aftermath (`docs/PLAN.md` §5.1). A run that only
+   * copies starts straight away: a confirmation nobody needs is a
+   * confirmation nobody reads.
+   */
+  const backUp = async (row: RuleRow) => {
+    setError(null);
+    setOutcome(null);
+    try {
+      const plans = await planRun(row.rule.id);
+      const deletes = plans.some(
+        (plan) => plan.outcome.kind === "ready" && plan.outcome.plan.deletions.length > 0,
+      );
+      if (deletes) {
+        setPanel({ kind: "preview-run", row, plans });
+        return;
+      }
+      await start(row);
+    } catch (e: unknown) {
+      setError(e instanceof ShelvError ? e.message : String(e));
+    }
+  };
+
+  const start = async (row: RuleRow) => {
+    close();
+    setRunning(row.rule.id);
+    try {
+      await runRule(row.rule.id);
+    } catch (e: unknown) {
+      // The run never started, so nothing will arrive to clear this.
+      setRunning(null);
+      setError(e instanceof ShelvError ? e.message : String(e));
+    }
+  };
 
   const close = () => {
     setPanel({ kind: "none" });
@@ -226,12 +323,20 @@ export function App() {
             <span style={{ color: "var(--status-mismatch)" }}>{error}</span>
           ) : loading ? (
             "Loading…"
+          ) : running !== null ? (
+            <RunStatus
+              rows={rows}
+              running={running}
+              progress={progress}
+              onCancel={() => void cancelRun()}
+            />
+          ) : outcome !== null ? (
+            <RunOutcomeLine rows={rows} outcome={outcome} />
           ) : (
             <>
               {rows.length} {rows.length === 1 ? "rule" : "rules"}
               {unreachable > 0 &&
                 ` · ${String(unreachable)} with no reachable destination`}
-              {" · nothing is copied yet — the backup engine is not built"}
             </>
           )
         }
@@ -259,6 +364,8 @@ export function App() {
                 onEdit={(row) => {
                   setPanel({ kind: "edit-rule", row });
                 }}
+                onBackUp={(row) => void backUp(row)}
+                running={running}
                 onCreate={() => {
                   setPanel({ kind: "new-rule" });
                 }}
@@ -288,6 +395,15 @@ export function App() {
             );
           })()}
       </AppShell>
+
+      {panel.kind === "preview-run" && (
+        <RunPreview
+          row={panel.row}
+          plans={panel.plans}
+          onCancel={close}
+          onConfirm={() => void start(panel.row)}
+        />
+      )}
 
       {panel.kind === "new-rule" && (
         <RuleEditor tags={tags} onClose={close} onSaved={afterChange} />
@@ -438,5 +554,115 @@ function ConfirmDelete({
         </div>
       </div>
     </div>
+  );
+}
+
+/** Bytes in the units a person reads. */
+function size(bytes: number): string {
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return `${unit === 0 ? String(value) : value.toFixed(1)} ${units[unit] ?? "B"}`;
+}
+
+function ruleName(rows: RuleRow[], id: RuleId): string {
+  return rows.find((row) => row.rule.id === id)?.rule.spec.name ?? "a rule";
+}
+
+/**
+ * What is happening, while it happens.
+ *
+ * Counts rather than a bar: the totals grow as the run reaches each
+ * destination, so a bar would appear to go backwards. The file being copied
+ * is shown because "something is happening" and "this file is taking a long
+ * time" are different things to know.
+ */
+function RunStatus({
+  rows,
+  running,
+  progress,
+  onCancel,
+}: {
+  rows: RuleRow[];
+  running: RuleId;
+  progress: RunProgress | null;
+  onCancel: () => void;
+}) {
+  return (
+    <span className="flex min-w-0 items-center gap-3">
+      <span className="shrink-0" style={{ color: "var(--accent-blue)" }}>
+        Backing up {ruleName(rows, running)}
+      </span>
+      {progress !== null && (
+        <>
+          <span className="shrink-0">
+            {progress.files_done} of {progress.files_total} files ·{" "}
+            {size(progress.bytes_done)} of {size(progress.bytes_total)}
+          </span>
+          <span className="min-w-0 truncate font-mono text-fg-muted">
+            {progress.file}
+          </span>
+        </>
+      )}
+      <button
+        type="button"
+        onClick={onCancel}
+        className="shrink-0 underline-offset-2 hover:underline"
+        style={{ color: "var(--status-mismatch)" }}
+      >
+        Cancel
+      </button>
+    </span>
+  );
+}
+
+/**
+ * How the last run went, until something else needs the status bar.
+ *
+ * Every destination is named separately, because each one succeeds or fails
+ * on its own — a drive that was unplugged must not make the drive that
+ * finished look like it failed.
+ */
+function RunOutcomeLine({ rows, outcome }: { rows: RuleRow[]; outcome: RunFinished }) {
+  const name = ruleName(rows, outcome.rule);
+
+  if (outcome.error !== null) {
+    return (
+      <span style={{ color: "var(--status-mismatch)" }}>
+        {name} could not run: {outcome.error}
+      </span>
+    );
+  }
+
+  const ran = outcome.summaries.filter((summary) => summary.result !== null);
+  const skipped = outcome.summaries.length - ran.length;
+  const copied = ran.reduce((n, summary) => n + summary.stats.files_copied, 0);
+  const deleted = ran.reduce((n, summary) => n + summary.stats.files_deleted, 0);
+  const bytes = ran.reduce((n, summary) => n + summary.stats.bytes_copied, 0);
+  const worst = ran.some((s) => s.result === "failed")
+    ? "failed"
+    : ran.some((s) => s.result === "cancelled")
+      ? "cancelled"
+      : ran.some((s) => s.result === "partial")
+        ? "partial"
+        : "ok";
+
+  const words: Record<string, string> = {
+    ok: "finished",
+    partial: "finished, with files it could not copy",
+    cancelled: "was cancelled",
+    failed: "failed",
+  };
+
+  return (
+    <span style={worst === "ok" ? undefined : { color: "var(--status-mismatch)" }}>
+      {name} {words[worst] ?? "finished"} · {copied} copied · {size(bytes)}
+      {deleted > 0 && ` · ${String(deleted)} moved to trash`}
+      {skipped > 0 && ` · ${String(skipped)} destination unavailable`}
+    </span>
   );
 }

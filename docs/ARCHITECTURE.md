@@ -46,7 +46,7 @@ a concrete implementation. `scripts/check-platform-boundary.sh` fails CI if the
 | `store/` | SQLite. Rules, destinations, tags, known volumes, run history. Schema migrations keyed on `user_version`. |
 | `model/` | The domain types, and how each is spelled in the database. |
 | `view/` | Aggregates for the UI: a rule plus its tags, destinations, availability and last result. |
-| `engine/` | Plan, execute, prune. **M1.** |
+| `engine/` | Plan, execute, prune. `engine::planner` decides and writes nothing; `engine::copier` writes. Deletion, snapshots and pruning are **M1.3–M1.4, M3**. |
 | `cloud/` | OneDrive hydration, budgets, pin-state restore. **M4.** |
 | `scheduler/` | Cron evaluation, catch-up, run-on-connect, the run queue. **M3.** |
 | `safety/` | Path canonicalisation and the destructive-operation guards. **M1.** |
@@ -123,6 +123,170 @@ deliberately not enumerated: **Add drive…** opens the same native picker
 every other location goes through, which is the OS's own consent step, so
 there is only ever one way a drive enters Shelv. Forgetting a drive is
 refused while any rule points at it.
+
+### Planning a run
+
+`engine::planner::plan` walks the source, applies the rule's ignore patterns,
+indexes the destination and produces a `Plan` — copies, deletions,
+directories, and every entry it passed over with the reason why. It opens
+files for metadata only and writes nothing, so a dry run is literally the
+same code the real run will use rather than a second implementation that can
+disagree with it.
+
+Four things it has to get right, each of which loses or corrupts data if it
+does not:
+
+- **Containment.** Links are never followed by the walk itself. Each one is
+  resolved individually and both ends canonicalised; a target outside the
+  source root is refused even when the rule follows links, because otherwise
+  a link placed inside the source is a way to make Shelv copy anything on the
+  machine.
+- **mtime tolerance.** Taken from the *destination* volume. FAT32 records
+  timestamps to two seconds, so an exact comparison against an NTFS source
+  marks every file changed and re-copies the whole tree on every run.
+- **Case folding.** Also the destination's, through `CaseSensitivity::fold`.
+  It is the destination that decides whether two source names collide, and a
+  collision left unfolded would leave mirror treating one of the pair as
+  extraneous.
+- **Unreadable entries.** Recorded as skips, not swallowed, so the run
+  reports `Partial` rather than `Ok`.
+
+`engine::plan_rule` is the id-taking layer above it: it resolves the rule's
+source and destinations from the database, plans each destination on that
+destination's own terms, and reports an absent drive as `Unavailable` rather
+than failing the whole preview. `plan_run` exposes it over IPC.
+
+### Writing the plan
+
+`engine::copier::copy_plan` takes a plan and two roots and creates files.
+It never removes one — mirror's deletions are a separate step, kept apart so
+the code that can destroy a file is reviewed on its own.
+
+Every file is written to a temporary name **beside its destination** and
+renamed into place once its bytes are on disk and `sync_all` has returned.
+That is the whole of the first acceptance criterion: a rename within a volume
+is atomic, so at no instant does the destination hold a half-written file
+under its real name. Pull the drive mid-copy and what is there is either the
+previous complete file or the new one. The temp file sits beside the target
+rather than in a system temp directory for the same reason — a rename across
+volumes is a copy, and would defeat both the atomicity and the point.
+
+Two details that look incidental and are not:
+
+- **The source's mtime is restored on the copy.** The planner diffs on size
+  and mtime, so a file that landed stamped with the time of the copy would
+  look newer than its source forever and be re-copied on every run. A test
+  asserts the second plan of a freshly copied tree is empty.
+- **A file that fails is recorded, not fatal.** `CopyReport::failures` names
+  each one and the run continues; a backup that stops at the first locked
+  file backs up almost nothing. Any failure means the run is `Partial`.
+
+Cancellation is checked between chunks as well as between files, so stopping
+during a large file takes effect at once. What was being written is a temp
+file, so abandoning it leaves the destination untouched and nothing behind —
+both of which are tested, and the atomicity test is verified to fail if
+temp-and-rename is removed.
+
+Parallelism is four workers by default and deliberately low: backup
+destinations are overwhelmingly external disks, and oversubscribing a
+mechanical one turns a sequential write into a seek storm. Progress travels
+back through the `CopyObserver` trait rather than a channel, because
+`shelv-core` owns no runtime; the shell implements it and throttles the
+calls into events.
+
+### Removing what the source no longer has
+
+`engine::trash` is the only code in Shelv that takes a file away from
+someone, which is why it is a module of its own rather than a branch inside
+the copier.
+
+Nothing in it unlinks. A mirror deletion is a **move** into
+`<destination>/.shelv-trash/<timestamp>/`, keeping the file's path within the
+backup, so undoing a mistake is a matter of moving a folder back. The trash
+folder is on the destination volume, so the move is a rename: it costs
+nothing and it cannot half-succeed. There is no copy-then-delete fallback —
+if the rename fails, the file stays where it is and the run says so.
+
+This departs from `docs/PLAN.md` §4 T4, which asked for the Recycle Bin.
+Windows commonly has the per-volume recycle bin disabled on removable
+drives, and `IFileOperation` then deletes permanently, which is the precise
+outcome the recycle bin was chosen to prevent; backup destinations are
+overwhelmingly removable drives. `PlatformFs::trash` remains on the trait and
+still refuses on both platforms, so nothing can reach the permanent path by
+accident.
+
+**The trash folder is excluded from the planner's destination index.** Left
+in, every previously deleted file would look extraneous, so the next run
+would move the trash into the trash and the run after that would do it
+again. The test for this is verified to fail when the exclusion is removed.
+
+One folder per run, named in UTC by `engine::stamp` — `2025-09-22T073412Z`.
+Local time would read more naturally and would mean carrying a timezone
+database and a rule for the hour that happens twice each autumn; two folders
+from one evening that sort into the wrong order, or collide, is the worse
+failure. The `Z` is there so nobody has to guess. Nothing prunes the trash
+yet: retention is M3, and a trash folder that quietly emptied itself before
+then would be the same mistake as deleting outright, only later.
+
+### One run, start to finish
+
+`engine::run::execute` is the order those three modules go in: plan, copy,
+and — for a mirror only — move what the source no longer has out of the way.
+Deletion comes **after** the copy, so a file about to be replaced is
+replaced rather than trashed and rewritten, and a run cancelled part-way
+through its copy never reaches the deletion pass at all.
+
+Two decisions live here rather than in any of the three:
+
+- **Where a run writes.** A mirror writes into the destination folder
+  itself. A snapshot writes into a new timestamped folder beneath it and
+  never touches one already there — no diff, no deletion, every file copied
+  again. A snapshot that skipped unchanged files would be a snapshot with
+  holes in it, and restoring from it would need every earlier folder. If a
+  second run starts within the same second as one that already exists, it
+  takes the next free name rather than writing into it; one-second timestamp
+  resolution is otherwise a way for "nothing already written is ever
+  touched" to hold for last year's snapshot and not for the one from a
+  moment ago.
+- **How the run is recorded.** Cancelled beats everything, because a
+  cancelled run has neither failed nor succeeded and putting it in the
+  `Partial` column would hide the runs that need attention. Otherwise any
+  unreadable file, failed copy or failed move makes the run `Partial`;
+  only a run that did everything it planned is `Ok`.
+
+Retention is M3, so snapshots accumulate. The editor already says pruning is
+governed by the retention setting, which must not be read as saying it is
+happening yet.
+
+### Backup Now
+
+The engine is synchronous and knows nothing of Tauri. `src-tauri/src/runner.rs`
+is what gives it a thread, turns its callbacks into events and lets the window
+stop it.
+
+- **One run at a time**, app-wide. Two runs could otherwise write to one drive
+  at once, and a second Backup Now on a rule already running would copy the
+  same tree twice. The scheduler in M3 will queue per volume; until then
+  refusing the second run, and saying why, is the honest behaviour.
+- **Its own database connection.** A backup takes minutes, and holding the
+  lock the commands share for that long would freeze the rule table while it
+  shows the backup running. `SQLite` is in WAL mode with a busy timeout, so a
+  second connection is the ordinary answer; a run writes two rows, one at the
+  start and one at the end.
+- **Progress throttled to ten events a second.** A million-file run would
+  otherwise spend its time serialising events. The status bar shows counts
+  rather than a bar, because the totals grow as the run reaches each
+  destination and a bar would appear to go backwards.
+- **A preview before anything is removed.** A mirror deletes whatever its
+  source no longer has — the behaviour that was asked for, and the one that
+  destroys files when a rule points somewhere unintended. So Backup Now on a
+  rule whose plan holds deletions shows them first, by path, with where they
+  will go. A run that only copies starts immediately: a confirmation nobody
+  needs is a confirmation nobody reads.
+- **Each destination is its own history row**, because each succeeds or fails
+  on its own. A drive that was unplugged is recorded as skipped, not as a
+  failure — that is the ordinary case for a removable drive, and colouring it
+  red would train someone to ignore the colour.
 
 ## Volume identity
 
