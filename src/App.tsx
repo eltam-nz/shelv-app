@@ -303,15 +303,19 @@ export function App() {
             >
               Drives
             </button>
+            {/* Solid, where everything else in the header is a chip or a
+                toggle. It is the only button up here that creates
+                something; sharing the translucent accent fill with the
+                Drives toggle made the two read as a pair of switches. */}
             <button
               type="button"
               onClick={() => {
                 setPanel({ kind: "new-rule" });
               }}
-              className="rounded px-3 py-1 text-xs"
+              className="rounded px-3 py-1 text-xs font-medium"
               style={{
-                color: "var(--accent-blue)",
-                backgroundColor: "var(--accent-blue-fill)",
+                color: "var(--bg)",
+                backgroundColor: "var(--accent-blue)",
               }}
             >
               New rule

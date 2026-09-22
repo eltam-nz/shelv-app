@@ -506,11 +506,8 @@ export function RuleTable({
           <button
             type="button"
             onClick={onCreate}
-            className="mt-4 rounded px-3 py-1"
-            style={{
-              color: "var(--accent-blue)",
-              backgroundColor: "var(--accent-blue-fill)",
-            }}
+            className="mt-4 rounded px-3 py-1 font-medium"
+            style={{ color: "var(--bg)", backgroundColor: "var(--accent-blue)" }}
           >
             New rule
           </button>
