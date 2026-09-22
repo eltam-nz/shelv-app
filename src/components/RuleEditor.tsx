@@ -98,6 +98,7 @@ export function RuleEditor({
   tags,
   onClose,
   onSaved,
+  onDelete,
 }: {
   /** The rule being edited, or `undefined` to create a new one. */
   existing?: RuleRow;
@@ -105,6 +106,8 @@ export function RuleEditor({
   tags: Tag[];
   onClose: () => void;
   onSaved: () => void;
+  /** Asked to delete the rule being edited. Absent for a new rule. */
+  onDelete?: (row: RuleRow) => void;
 }) {
   const [source, setSource] = useState<LocationDraft | null>(
     existing
@@ -558,23 +561,50 @@ export function RuleEditor({
           )}
         </div>
 
-        <footer className="flex items-center justify-end gap-3 border-t border-border px-4 py-3">
-          <button type="button" onClick={onClose} className="text-fg-muted hover:text-fg">
-            Cancel
-          </button>
-          <button
-            type="button"
-            onClick={() => void save()}
-            disabled={blocked || saving}
-            title={blocked ? "Fix the problems above first" : "Save this rule"}
-            className="rounded px-3 py-1 disabled:cursor-not-allowed disabled:opacity-50"
-            style={{
-              color: "var(--accent-blue)",
-              backgroundColor: "var(--accent-blue-fill)",
-            }}
-          >
-            {saving ? "Saving…" : existing ? "Save changes" : "Create rule"}
-          </button>
+        <footer className="flex items-center justify-between gap-3 border-t border-border px-4 py-3">
+          {/* Away from Save, at the other end of the footer, because the
+              two are a keystroke apart and one of them cannot be undone.
+              Deleting lives here rather than in the rule table: a row
+              carries an action per rule and a third one would put a
+              destructive button next to Backup Now on every line. */}
+          {existing === undefined ? (
+            <span />
+          ) : (
+            <button
+              type="button"
+              onClick={() => {
+                onDelete?.(existing);
+              }}
+              title="Delete this rule. Files already backed up are not touched."
+              className="rounded px-3 py-1"
+              style={{ color: "var(--status-mismatch)" }}
+            >
+              Delete rule
+            </button>
+          )}
+
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={onClose}
+              className="text-fg-muted hover:text-fg"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={() => void save()}
+              disabled={blocked || saving}
+              title={blocked ? "Fix the problems above first" : "Save this rule"}
+              className="rounded px-3 py-1 disabled:cursor-not-allowed disabled:opacity-50"
+              style={{
+                color: "var(--accent-blue)",
+                backgroundColor: "var(--accent-blue-fill)",
+              }}
+            >
+              {saving ? "Saving…" : existing ? "Save changes" : "Create rule"}
+            </button>
+          </div>
         </footer>
       </div>
     </div>

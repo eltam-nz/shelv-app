@@ -82,6 +82,35 @@ const AVAILABILITY: Record<Availability, Omit<PillProps, "title"> & { title: str
 };
 
 /**
+ * The same states as {@link AvailabilityPill}, compressed to their glyph.
+ *
+ * For use beside a drive's name in the rule table, where a full pill in its
+ * own column costs more width than the information is worth — the drives
+ * pane already spells every state out, and most rows are `Available`, which
+ * is the one state nobody needs to read.
+ *
+ * Still not colour alone: each state has a distinct glyph, so the shapes
+ * differ in greyscale, and the word travels with it for a screen reader and
+ * on hover. `Available` renders nothing at all — a row with no mark is the
+ * ordinary one, and marking it would train the eye to skip exactly the
+ * marks that matter.
+ */
+export function AvailabilityMark({ availability }: { availability: Availability }) {
+  if (availability === "available") return null;
+  const spec = AVAILABILITY[availability];
+  return (
+    <span
+      className="shrink-0 text-[11px] leading-none"
+      style={{ color: spec.color }}
+      title={`${spec.label} — ${spec.title}`}
+    >
+      <span aria-hidden="true">{spec.icon}</span>
+      <span className="sr-only">{spec.label}</span>
+    </span>
+  );
+}
+
+/**
  * Whether a destination can be written to, and if not, why.
  *
  * `mount` puts where the drive currently is inside the pill — "Available —

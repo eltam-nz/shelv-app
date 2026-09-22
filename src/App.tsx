@@ -415,6 +415,9 @@ export function App() {
           tags={tags}
           onClose={close}
           onSaved={afterChange}
+          onDelete={(row) => {
+            setPanel({ kind: "confirm-delete", row });
+          }}
         />
       )}
 

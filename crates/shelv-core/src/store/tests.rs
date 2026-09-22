@@ -519,6 +519,46 @@ fn forgetting_a_drive_a_rule_still_uses_is_refused_with_a_count() {
 }
 
 #[test]
+fn a_drive_used_twice_by_one_rule_still_counts_as_one_rule() {
+    // A rule copying one folder on a drive to another folder on the same
+    // drive touches it twice, and a rule with two destinations on one drive
+    // touches it three times. Adding those up answers a question nobody
+    // asked: the drives pane says "Rules", and one rule is one rule.
+    let store = Store::open_in_memory().unwrap();
+    let only = volume_id(&store, "vol-only");
+
+    let rule = store.create_rule(&sample_spec(only), 1000).unwrap();
+    for folder in ["Backups", "Backups-2"] {
+        store
+            .add_destination(
+                rule,
+                &VolumePath {
+                    volume: only,
+                    relative: PathBuf::from(folder),
+                },
+                0,
+            )
+            .unwrap();
+    }
+
+    assert_eq!(store.volume_references(only).unwrap(), 1);
+
+    // And a second rule on the same drive does count.
+    let second = store.create_rule(&sample_spec(only), 2000).unwrap();
+    store
+        .add_destination(
+            second,
+            &VolumePath {
+                volume: only,
+                relative: PathBuf::from("Elsewhere"),
+            },
+            0,
+        )
+        .unwrap();
+    assert_eq!(store.volume_references(only).unwrap(), 2);
+}
+
+#[test]
 fn an_unused_drive_can_be_forgotten() {
     let store = Store::open_in_memory().unwrap();
     let id = volume_id(&store, "vol-a");

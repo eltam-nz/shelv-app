@@ -202,17 +202,28 @@ impl Store {
         Ok(())
     }
 
-    /// How many rules use this volume, as a source or as a destination.
+    /// How many **rules** use this volume, as a source or as a destination.
     ///
     /// Counted so that forgetting a drive can refuse with a reason. The
     /// foreign keys would refuse it anyway, but as an opaque constraint
     /// failure — and "this drive is used by 3 rules" is the thing the user
     /// needs to know.
+    ///
+    /// Distinct rules, not appearances. A rule that copies one folder on a
+    /// drive to another folder on the same drive touches it twice, and a
+    /// rule with two destinations on one drive touches it three times;
+    /// adding those up answers a question nobody asked and reads as
+    /// "3 rules" when there is one.
     pub fn volume_references(&self, id: VolumeId) -> Result<usize> {
         self.conn
             .query_row(
-                "SELECT (SELECT count(*) FROM rule WHERE source_volume = ?1)
-                      + (SELECT count(*) FROM destination WHERE volume_id = ?1)",
+                // UNION rather than UNION ALL: the de-duplication is the
+                // whole point.
+                "SELECT count(*) FROM (
+                     SELECT id AS rule_id FROM rule WHERE source_volume = ?1
+                     UNION
+                     SELECT rule_id FROM destination WHERE volume_id = ?1
+                 )",
                 [id],
                 |row| row.get::<_, i64>(0),
             )
