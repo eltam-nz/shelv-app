@@ -46,7 +46,7 @@ a concrete implementation. `scripts/check-platform-boundary.sh` fails CI if the
 | `store/` | SQLite. Rules, destinations, tags, known volumes, run history. Schema migrations keyed on `user_version`. |
 | `model/` | The domain types, and how each is spelled in the database. |
 | `view/` | Aggregates for the UI: a rule plus its tags, destinations, availability and last result. |
-| `engine/` | Plan, execute, prune. `engine::planner` is complete and writes nothing; the copier is **M1.2**. |
+| `engine/` | Plan, execute, prune. `engine::planner` decides and writes nothing; `engine::copier` writes. Deletion, snapshots and pruning are **M1.3–M1.4, M3**. |
 | `cloud/` | OneDrive hydration, budgets, pin-state restore. **M4.** |
 | `scheduler/` | Cron evaluation, catch-up, run-on-connect, the run queue. **M3.** |
 | `safety/` | Path canonicalisation and the destructive-operation guards. **M1.** |
@@ -155,6 +155,44 @@ does not:
 source and destinations from the database, plans each destination on that
 destination's own terms, and reports an absent drive as `Unavailable` rather
 than failing the whole preview. `plan_run` exposes it over IPC.
+
+### Writing the plan
+
+`engine::copier::copy_plan` takes a plan and two roots and creates files.
+It never removes one — mirror's deletions are a separate step, kept apart so
+the code that can destroy a file is reviewed on its own.
+
+Every file is written to a temporary name **beside its destination** and
+renamed into place once its bytes are on disk and `sync_all` has returned.
+That is the whole of the first acceptance criterion: a rename within a volume
+is atomic, so at no instant does the destination hold a half-written file
+under its real name. Pull the drive mid-copy and what is there is either the
+previous complete file or the new one. The temp file sits beside the target
+rather than in a system temp directory for the same reason — a rename across
+volumes is a copy, and would defeat both the atomicity and the point.
+
+Two details that look incidental and are not:
+
+- **The source's mtime is restored on the copy.** The planner diffs on size
+  and mtime, so a file that landed stamped with the time of the copy would
+  look newer than its source forever and be re-copied on every run. A test
+  asserts the second plan of a freshly copied tree is empty.
+- **A file that fails is recorded, not fatal.** `CopyReport::failures` names
+  each one and the run continues; a backup that stops at the first locked
+  file backs up almost nothing. Any failure means the run is `Partial`.
+
+Cancellation is checked between chunks as well as between files, so stopping
+during a large file takes effect at once. What was being written is a temp
+file, so abandoning it leaves the destination untouched and nothing behind —
+both of which are tested, and the atomicity test is verified to fail if
+temp-and-rename is removed.
+
+Parallelism is four workers by default and deliberately low: backup
+destinations are overwhelmingly external disks, and oversubscribing a
+mechanical one turns a sequential write into a seek storm. Progress travels
+back through the `CopyObserver` trait rather than a channel, because
+`shelv-core` owns no runtime; the shell implements it and throttles the
+calls into events.
 
 ## Volume identity
 

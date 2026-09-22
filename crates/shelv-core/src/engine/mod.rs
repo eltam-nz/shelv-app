@@ -12,6 +12,7 @@
 //! and progress travels back through a callback rather than a channel the
 //! core has to own.
 
+pub mod copier;
 pub mod planner;
 
 use serde::{Deserialize, Serialize};

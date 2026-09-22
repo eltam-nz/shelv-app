@@ -5,7 +5,9 @@
 
 export type { Availability } from "./Availability";
 export type { CaseSensitivity } from "./CaseSensitivity";
+export type { CopyFailure } from "./CopyFailure";
 export type { CopyReason } from "./CopyReason";
+export type { CopyReport } from "./CopyReport";
 export type { CoreError } from "./CoreError";
 export type { DataLocations } from "./DataLocations";
 export type { Destination } from "./Destination";
