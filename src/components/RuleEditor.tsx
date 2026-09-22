@@ -9,7 +9,8 @@ import {
   validateRule,
 } from "../lib/ipc";
 import { tagStyle } from "../lib/palette";
-import { volumeName } from "../lib/volumes";
+import { driveName, volumeName } from "../lib/volumes";
+import { DriveLocation } from "./DriveLocation";
 import {
   describeProblem,
   generalProblems,
@@ -17,6 +18,7 @@ import {
 } from "../lib/problems";
 import type {
   Layout,
+  PickedFolder,
   Packaging,
   PlaceholderPolicy,
   RuleProblem,
@@ -37,18 +39,22 @@ import type {
  * (docs/PLAN.md §4.2).
  */
 
-/** A destination being edited, with enough context to show it. */
-interface DestinationDraft {
+/**
+ * A location being edited.
+ *
+ * Carries the drive's name and the path separately rather than one
+ * pre-joined string. A freshly picked folder used to be shown as the bare
+ * absolute path while a saved one was shown as `Drive · relative`, so the
+ * same folder read differently depending on how it got here — and the drive,
+ * the part that matters for a disk that comes and goes, was missing from
+ * exactly the case where the user was choosing it.
+ */
+interface LocationDraft {
   path: VolumePath;
-  label: string | null;
-  display: string;
-}
-
-/** A source being edited. */
-interface SourceDraft {
-  path: VolumePath;
-  label: string | null;
-  display: string;
+  /** The drive's name, already resolved through `driveName`. */
+  name: string;
+  /** Where the drive is mounted right now, or `null` if it is not attached. */
+  mount: string | null;
 }
 
 function emptySpec(source: VolumePath): RuleSpec {
@@ -58,7 +64,6 @@ function emptySpec(source: VolumePath): RuleSpec {
     source,
     layout: "mirror",
     packaging: "files",
-    allow_deletions: false,
     retention: { kind: "unlimited" },
     schedule: { kind: "manual" },
     run_on_connect: true,
@@ -68,6 +73,20 @@ function emptySpec(source: VolumePath): RuleSpec {
     follow_symlinks: false,
     excludes: [],
   };
+}
+
+/**
+ * Names the drive a just-picked folder sits on.
+ *
+ * It was picked, so it is attached: there is no last-seen mount to fall back
+ * to and none is needed.
+ */
+function draftName(picked: PickedFolder): string {
+  return driveName({
+    label: picked.volume_label,
+    serial: picked.volume_serial,
+    mount: picked.mount_point,
+  });
 }
 
 function scheduleValue(schedule: Schedule): string {
@@ -87,24 +106,24 @@ export function RuleEditor({
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const [source, setSource] = useState<SourceDraft | null>(
+  const [source, setSource] = useState<LocationDraft | null>(
     existing
       ? {
           path: existing.rule.spec.source,
-          label: existing.source.volume.label,
-          display: `${volumeName(existing.source)} · ${existing.rule.spec.source.relative}`,
+          name: volumeName(existing.source),
+          mount: existing.source.mount_point,
         }
       : null,
   );
   const [spec, setSpec] = useState<RuleSpec | null>(
     existing ? { ...existing.rule.spec } : null,
   );
-  const [destinations, setDestinations] = useState<DestinationDraft[]>(
+  const [destinations, setDestinations] = useState<LocationDraft[]>(
     existing
       ? existing.destinations.map((d) => ({
           path: d.destination.path,
-          label: d.status.volume.label,
-          display: `${volumeName(d.status)} · ${d.destination.path.relative}`,
+          name: volumeName(d.status),
+          mount: d.status.mount_point,
         }))
       : [],
   );
@@ -143,10 +162,10 @@ export function RuleEditor({
     try {
       const picked = await pickFolder();
       if (!picked) return;
-      const draft: SourceDraft = {
+      const draft: LocationDraft = {
         path: picked.path,
-        label: picked.volume_label,
-        display: picked.display_path,
+        name: draftName(picked),
+        mount: picked.mount_point,
       };
       setSource(draft);
       setSpec((current) =>
@@ -166,8 +185,8 @@ export function RuleEditor({
         ...current,
         {
           path: picked.path,
-          label: picked.volume_label,
-          display: picked.display_path,
+          name: draftName(picked),
+          mount: picked.mount_point,
         },
       ]);
     } catch (e: unknown) {
@@ -240,9 +259,11 @@ export function RuleEditor({
                 {source ? "Change…" : "Choose folder…"}
               </button>
               {source && (
-                <span className="truncate text-fg-muted" title={source.display}>
-                  {source.display}
-                </span>
+                <DriveLocation
+                  name={source.name}
+                  relative={source.path.relative}
+                  mount={source.mount}
+                />
               )}
             </div>
           </Field>
@@ -273,9 +294,11 @@ export function RuleEditor({
                         className="rounded border border-border p-2"
                       >
                         <div className="flex items-start justify-between gap-3">
-                          <span className="truncate" title={destination.display}>
-                            {destination.display}
-                          </span>
+                          <DriveLocation
+                            name={destination.name}
+                            relative={destination.path.relative}
+                            mount={destination.mount}
+                          />
                           <button
                             type="button"
                             onClick={() => {
@@ -495,17 +518,16 @@ export function RuleEditor({
                 hint="Run as soon as possible if the machine was off or the drive absent when it was due."
               />
 
-              {spec.layout === "mirror" && (
-                <Toggle
-                  checked={spec.allow_deletions}
-                  onChange={(v) => {
-                    update({ allow_deletions: v });
-                  }}
-                  label="Delete files from the backup when they are deleted from the source"
-                  hint="The only setting here that can destroy data. Off, the backup only ever grows. On, it tracks the source exactly — including removals."
-                  danger
-                />
-              )}
+              {/* Deletion is no longer a separate question: it follows from
+                  the layout. Stating what the chosen layout will do is still
+                  necessary, because "mirror" quietly includes removals and
+                  someone who has not thought it through deserves to be told
+                  before the first run rather than after it. */}
+              <p className="text-xs text-fg-muted">
+                {spec.layout === "mirror"
+                  ? "A mirror tracks the source exactly: files you delete from the source are removed from the backup too, into the recycle bin rather than erased."
+                  : "Snapshots are never modified once written. Nothing is deleted from a previous snapshot; whole old snapshots are removed only by the retention setting above."}
+              </p>
 
               <Field label="Ignore" hint="One pattern per line, e.g. *.tmp or Thumbs.db.">
                 <textarea
@@ -607,28 +629,23 @@ function Select({
   );
 }
 
+// The `danger` variant this once carried went with the deletion toggle. No
+// setting in the editor can destroy data any more — deletion follows from the
+// layout, which the copy beside it explains — so the styling went too rather
+// than sitting here unused waiting to be reached for.
 function Toggle({
   checked,
   onChange,
   label,
   hint,
-  danger,
 }: {
   checked: boolean;
   onChange: (value: boolean) => void;
   label: string;
   hint?: string;
-  danger?: boolean;
 }) {
   return (
-    <label
-      className="flex gap-2 rounded p-2"
-      style={
-        danger === true && checked
-          ? { backgroundColor: "var(--status-mismatch-fill)" }
-          : undefined
-      }
-    >
+    <label className="flex gap-2 rounded p-2">
       <input
         type="checkbox"
         checked={checked}
@@ -638,14 +655,7 @@ function Toggle({
         className="mt-0.5"
       />
       <span>
-        <span
-          className="block"
-          style={
-            danger === true && checked ? { color: "var(--status-mismatch)" } : undefined
-          }
-        >
-          {label}
-        </span>
+        <span className="block">{label}</span>
         {hint !== undefined && (
           <span className="block text-xs text-fg-muted">{hint}</span>
         )}

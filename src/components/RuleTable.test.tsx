@@ -11,9 +11,31 @@ import { RuleTable } from "./RuleTable";
  * wrong disk, and a rule that cannot run being offered as if it could.
  */
 
+/**
+ * The position of a column, looked up by its heading.
+ *
+ * Cells are addressed through this rather than by a hard-coded index: the
+ * simple and detailed views show different columns, so an index that is
+ * right in one is quietly pointing at the wrong data in the other.
+ */
+function columnIndex(name: RegExp): number {
+  const headers = screen.getAllByRole("columnheader");
+  const index = headers.findIndex((h) => name.test(h.textContent));
+  expect(index, `no column matching ${String(name)}`).toBeGreaterThanOrEqual(0);
+  return index;
+}
+
+/** The text of one cell of one body row. */
+function cellText(rowIndex: number, column: RegExp): string {
+  const row = screen.getAllByRole("row")[rowIndex + 1];
+  expect(row).toBeDefined();
+  // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+  return within(row!).getAllByRole("cell")[columnIndex(column)]?.textContent ?? "";
+}
+
 describe("RuleTable", () => {
   it("renders every column from the reference mock-up, plus Last Result", () => {
-    render(<RuleTable rows={sampleRows()} />);
+    render(<RuleTable rows={sampleRows()} view="detailed" />);
 
     for (const header of [
       "Tags",
@@ -33,6 +55,94 @@ describe("RuleTable", () => {
         `missing column: ${header}`,
       ).toBeInTheDocument();
     }
+  });
+
+  it("hides the configuration columns in the simple view", () => {
+    // Type, compression and frequency are set once and then forgotten, so
+    // in the everyday view they are width spent on nothing.
+    render(<RuleTable rows={sampleRows()} view="simple" />);
+
+    for (const hidden of ["Type", "Compression", "Frequency"]) {
+      expect(
+        screen.queryByRole("columnheader", { name: new RegExp(`^${hidden}$`, "i") }),
+        `${hidden} should be hidden`,
+      ).not.toBeInTheDocument();
+    }
+
+    // What the simple view keeps is everything that answers "is my data safe
+    // right now?".
+    for (const kept of ["Destination", "Status", "Last Result"]) {
+      expect(
+        screen.getByRole("columnheader", { name: new RegExp(kept, "i") }),
+      ).toBeInTheDocument();
+    }
+  });
+
+  it("shows the remaining rule settings in the detailed view", () => {
+    render(<RuleTable rows={sampleRows()} view="detailed" />);
+
+    for (const header of ["Cloud", "On connect", "Catch up", "Keep", "Links", "Ignore"]) {
+      expect(
+        screen.getByRole("columnheader", { name: new RegExp(header, "i") }),
+        `missing column: ${header}`,
+      ).toBeInTheDocument();
+    }
+
+    // And they carry words, not raw enum spellings.
+    expect(screen.getAllByText("Download").length).toBeGreaterThan(0);
+  });
+
+  it("defaults to the simple view", () => {
+    render(<RuleTable rows={sampleRows()} />);
+    expect(
+      screen.queryByRole("columnheader", { name: /^Compression$/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("leads a destination with its drive and shows the path within it", () => {
+    // The drive is what the destination actually is: a volume identity plus
+    // a path relative to it. The drive letter is not part of that, so it
+    // must not be what the reader sees first.
+    render(<RuleTable rows={sampleRows()} />);
+
+    const text = cellText(0, /Destination/i);
+    expect(text).toContain("Archive");
+    expect(text).toContain("Backups\\Lightroom");
+  });
+
+  it("shows the drive letter only while the drive is attached", () => {
+    // A letter printed beside an unplugged drive belongs to nothing, or to
+    // some other disk.
+    const rows = sampleRows();
+    render(<RuleTable rows={rows} />);
+
+    // "Phone Photos" has one attached destination and one that is not.
+    expect(screen.getAllByText(/^Photos \(E:\)$/).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/^Archive \(E:\)$/)).toBeNull();
+    expect(screen.getAllByText("Archive").length).toBeGreaterThan(0);
+  });
+
+  it("names the drive even when the platform calls it a fixed disk", () => {
+    // The bug this replaces a heuristic for. Windows reports DRIVE_REMOVABLE
+    // only when the *medium* comes out — flash sticks, card readers. A USB
+    // hard disk or SSD in an enclosure has fixed media inside a device you
+    // unplug, so it comes back DRIVE_FIXED, and gating the drive name on
+    // "removable" hid it for exactly the drives Shelv is for.
+    const rows = sampleRows();
+    for (const row of rows) {
+      for (const d of row.destinations) d.status.volume.drive_type = "fixed";
+    }
+
+    render(<RuleTable rows={rows} />);
+    expect(screen.getAllByText("Archive").length).toBeGreaterThan(0);
+  });
+
+  it("renders the path in italics beneath the drive, not merged into it", () => {
+    render(<RuleTable rows={sampleRows()} />);
+    const paths = screen.getAllByText("Backups\\Lightroom");
+    expect(paths.length).toBeGreaterThan(0);
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    expect(paths[0]!.className).toContain("italic");
   });
 
   it("renders one row per rule", () => {
@@ -171,7 +281,11 @@ describe("RuleTable", () => {
       screen
         .getAllByRole("row")
         .slice(1)
-        .map((row) => within(row).getAllByRole("cell")[9]?.textContent ?? "")
+        .map(
+          (row) =>
+            within(row).getAllByRole("cell")[columnIndex(/Last Backup/i)]?.textContent ??
+            "",
+        )
         .filter((text) => text !== "—")
         .map((text) => Date.parse(text));
 
@@ -223,10 +337,25 @@ describe("RuleTable", () => {
 
   it("shows an em dash for Next Backup until the scheduler exists", () => {
     render(<RuleTable rows={sampleRows()} />);
-    const firstRow = screen.getAllByRole("row")[1];
-    expect(firstRow).toBeDefined();
-    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-    const cells = within(firstRow!).getAllByRole("cell");
-    expect(cells[10]).toHaveTextContent("—");
+    expect(cellText(0, /Next Backup/i)).toBe("—");
+  });
+
+  it("keeps the actions pinned to the right edge of every row", () => {
+    // They have to stay reachable while the table scrolls sideways, and
+    // stay beside their own row while doing it. A sticky cell inside the row
+    // is aligned by construction; two separate lists would have to have
+    // their heights measured and copied, and would drift.
+    render(<RuleTable rows={sampleRows()} />);
+
+    for (const button of screen.getAllByRole("button", { name: "Edit Rule" })) {
+      const cell = button.closest("td");
+      expect(cell).not.toBeNull();
+      expect(cell?.className).toContain("sticky");
+      expect(cell?.className).toContain("right-0");
+      // Opaque, or the columns scrolling past would show through it, and
+      // bordered, so it reads as its own panel rather than a stuck cell.
+      expect(cell?.className).toContain("bg-bg");
+      expect(cell?.className).toContain("border-l");
+    }
   });
 });

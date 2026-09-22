@@ -68,6 +68,11 @@ the build as a dev build and points the webview at `devUrl`. The window then
 reads "localhost refused to connect" on any machine without a dev server.
 `scripts/check-embedded-frontend.mjs` asserts against this in CI.
 
+A build downloaded from CI is unsigned, and Windows Defender may block it as
+"a virus or unwanted software". That is expected, and `docs/SECURITY.md`
+explains why, how to check a build against the hash CI prints, and what
+actually fixes it.
+
 On a headless Linux machine the window can still be exercised:
 
 ```sh

@@ -81,10 +81,36 @@ const AVAILABILITY: Record<Availability, Omit<PillProps, "title"> & { title: str
   },
 };
 
-/** Whether a destination can be written to, and if not, why. */
-export function AvailabilityPill({ availability }: { availability: Availability }) {
+/**
+ * Whether a destination can be written to, and if not, why.
+ *
+ * `mount` puts where the drive currently is inside the pill — "Available —
+ * G:\" — rather than in a column of its own. The letter is only ever
+ * meaningful as a qualifier on "this drive is here right now"; standing
+ * alone it invites being read as part of the drive's identity, which is the
+ * one thing it is not.
+ *
+ * It is absent whenever the drive is not attached, and deliberately absent
+ * for a wrong-drive mismatch: something *is* mounted there, but it is not
+ * this volume, so printing its location beside this row would name the wrong
+ * disk.
+ */
+export function AvailabilityPill({
+  availability,
+  mount,
+}: {
+  availability: Availability;
+  mount?: string | null;
+}) {
   const spec = AVAILABILITY[availability];
-  return <Pill {...spec} />;
+  const at = mount !== null && mount !== undefined && mount !== "" ? mount : null;
+  return (
+    <Pill
+      {...spec}
+      label={at === null ? spec.label : `${spec.label} — ${at}`}
+      title={at === null ? spec.title : `${spec.title} Currently at ${at}.`}
+    />
+  );
 }
 
 const RESULT: Record<RunResult, Omit<PillProps, "title"> & { title: string }> = {

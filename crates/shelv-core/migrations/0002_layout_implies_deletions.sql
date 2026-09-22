@@ -1,0 +1,15 @@
+-- Deletion behaviour follows from the layout, so the separate flag goes.
+--
+-- `allow_deletions` asked the user a question the layout had already
+-- answered. A mirror that will not remove files is not a mirror: it drifts
+-- further from the source with every run, and the one thing the user asked
+-- for -- "this drive looks like that folder" -- is the thing it stops
+-- doing. A snapshot, conversely, must never delete, because a previous
+-- snapshot is a record of a moment and rewriting it is not a backup.
+--
+-- So mirror now always removes files the source no longer has (to the
+-- recycle bin, via PlatformFs::trash, not by unlinking), and snapshot never
+-- touches a snapshot it did not just write. Nothing is lost by dropping the
+-- column: a rule that had it off becomes a mirror that prunes, which is what
+-- choosing "mirror" meant.
+ALTER TABLE rule DROP COLUMN allow_deletions;

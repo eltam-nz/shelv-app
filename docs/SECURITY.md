@@ -34,10 +34,11 @@ user. They do not need Shelv.
 
 | # | Threat | Mitigation | Status |
 |---|---|---|---|
-| T1 | A crafted filename rendered in the rule table achieves script execution, which then drives the backup engine | Strict CSP; no `dangerouslySetInnerHTML`; no `eval`; `withGlobalTauri: false`; `freezePrototype`. Decisively, **the frontend holds no filesystem capability** — commands take ids and Rust resolves paths from the database | Implemented, tested |
+| T1 | A crafted filename rendered in the rule table achieves script execution, which then drives the backup engine | Strict CSP; no `dangerouslySetInnerHTML`; no `eval`; `withGlobalTauri: false`; `freezePrototype`. Decisively, **the frontend holds no filesystem capability** — commands take ids and Rust resolves paths from the database. The drives pane adds no way in: **Add drive…** opens the same native picker, so a drive still enters only by the user choosing it in the system dialog, and nothing enumerates attached hardware to the frontend. `reveal_data_folder` takes no path: the opener plugin would let the frontend ask the OS to launch anything, so instead one argument-free command opens one directory the backend chose | Implemented, tested |
 | T2 | Path traversal or a symlink escaping the source tree | Canonicalise both ends; reject any resolved path that is not a descendant of the rule root; `symlink_metadata` and do not follow links by default; depth cap; cycle detection | M1 |
 | T3 | Writing a backup to the wrong disk after a drive letter is reassigned | Match on stable volume identity before any write; a mismatch is surfaced as "Different drive". Where no stable identity exists at all, the volume is marked unverifiable and is equally unwritable, so "could not identify" never degrades into "assume it is the right one" | Implemented, tested |
-| T4 | A mirror rule deletes the user's data | Deletions off by default and opt-in per rule; refuse destination inside source and the reverse; refuse drive roots and system directories; dry run shows the deletion count first; delete to the recycle bin; temp file plus atomic rename so an interrupted run never truncates a good copy | M1 |
+| T3a | A drive nickname is mistaken for an identity, so a backup follows a *name* to the wrong disk | The nickname is display only. Nothing matches, resolves or writes on it, and the store's own refresh never reads it back — identity remains the single key. A drive renamed in Explorer, reformatted or reattached at another letter keeps both its identity and its nickname, and neither decides the other | Implemented, tested |
+| T4 | A mirror rule deletes the user's data | Deletion follows from the layout rather than a separate flag — a mirror removes what the source no longer has, a snapshot never touches a snapshot it did not just write, and the editor says which before the rule is saved; refuse destination inside source and the reverse; refuse drive roots and system directories; dry run shows the deletion count first; delete to the recycle bin; temp file plus atomic rename so an interrupted run never truncates a good copy | M1 |
 | T5 | Cloud hydration fills the system disk, or releases a file the user wanted kept locally | Preflight space check on both volumes; bounded hydrate-copy-release batches; per-rule budget; record each file's prior pin state and release only files Shelv itself hydrated | M4 |
 | T6 | Hydration produces truncated stubs that look like successful backups | Never memory-map a sync root; per-file hydration timeout; verify size against the placeholder's logical size before counting the copy as successful | M4 |
 | T7 | Data exfiltration | No telemetry, no analytics, no crash reporting; the updater is the only outbound request and is disableable | Implemented (nothing to disable yet) |
@@ -106,6 +107,61 @@ Nothing tests for a specific identity variant. Every decision goes through
 someone explicitly marks it trustworthy, and an `identity_kind` read back from
 the database that this build does not recognise is treated as unverifiable
 rather than assumed to be one we trust.
+
+## Antivirus false positives
+
+Windows Defender may refuse to download or run a Shelv build, reporting that
+it "contains a virus or unwanted software". Expect this, and do not read it
+as a verdict on the code — but do not take anyone's word that it is a false
+positive either, including this document's. Check.
+
+Three properties of every build push straight into what the heuristics are
+shaped to catch:
+
+* **It is unsigned.** There is no publisher to attribute it to, so nothing
+  offsets the rest. See §3.4 of `docs/PLAN.md`.
+* **It has no reputation.** Each CI run produces a binary whose hash the
+  world has never seen, downloaded by approximately one person. SmartScreen
+  reputation is earned by volume, which a private tool will never have.
+* **It behaves like the thing they hunt for.** Shelv enumerates every
+  attached volume once a second and, once the engine lands, walks user
+  documents and writes them somewhere else in bulk. Described that way it is
+  a backup tool. Described that way it is also ransomware, and a
+  machine-learning classifier is working from the description.
+
+So the detection is doing roughly what it should. The answer is provenance,
+not indignation.
+
+### Checking a build yourself
+
+1. The Windows CI job prints `shelv.exe SHA-256:` and repeats it in the run
+   summary. Compare it against the file you unzipped:
+   `Get-FileHash shelv.exe -Algorithm SHA256`. A match means the binary is
+   the one that workflow built from that commit, and nothing altered it in
+   between. A mismatch means stop.
+2. Upload it to VirusTotal. One or two `!ml` or `Unsafe` hits out of seventy
+   engines is the signature of a heuristic false positive; a broad consensus
+   naming a specific family is not, and should be treated as real.
+3. The source is the repository, the dependencies are pinned by committed
+   lockfiles, and `cargo-deny` checks advisories, licences and sources on
+   every run. None of that proves a binary is clean, but it is what there is
+   to inspect.
+
+### Making it stop
+
+* **Report the false positive to Microsoft** at
+  <https://www.microsoft.com/en-us/wdsi/filesubmission>, as a software
+  developer submitting for analysis. Free, usually answered within a few
+  days, and it clears the detection for everyone rather than one machine.
+* **Sign the binary.** The actual fix, and the reason §3.4 exists. An
+  organisation-validation certificate attributes builds to a publisher; an
+  extended-validation certificate additionally grants SmartScreen reputation
+  immediately rather than accruing it.
+* **An exclusion on your own machine** is defensible for a tool you built
+  yourself, from a repository you control, whose hash you have checked
+  against CI. It is not defensible as a reflex, and it is the narrowest of
+  the three: it helps exactly one computer, and it stays in place long after
+  the reason for it is forgotten.
 
 ## Deliberate exclusions
 

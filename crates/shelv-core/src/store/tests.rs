@@ -42,7 +42,6 @@ fn sample_spec(source: VolumeId) -> RuleSpec {
         },
         layout: Layout::Snapshot,
         packaging: Packaging::ZipDeflate,
-        allow_deletions: false,
         retention: Retention::KeepLastN(6),
         schedule: Schedule::Monthly,
         run_on_connect: true,
@@ -98,7 +97,7 @@ fn updating_a_rule_keeps_its_id_and_creation_time() {
     changed.name = "Lightroom Catalog (weekly)".to_owned();
     changed.schedule = Schedule::Cron("0 3 * * 1".to_owned());
     changed.retention = Retention::KeepDays(30);
-    changed.allow_deletions = true;
+    changed.layout = Layout::Snapshot;
     changed.excludes.clear();
     store.update_rule(id, &changed).unwrap();
 
@@ -430,4 +429,101 @@ fn an_unrecognised_drive_type_reads_back_as_unknown() {
     ] {
         assert_eq!(drive_type_from_str(drive_type_str(t)), t);
     }
+}
+
+#[test]
+fn a_nickname_survives_everything_the_operating_system_writes() {
+    // The property the whole feature rests on. `refresh_volume` runs once a
+    // second off what the OS reports; if it, or a re-pick through
+    // `upsert_volume`, wrote this column, the name the user chose would be
+    // gone by the next tick.
+    let store = Store::open_in_memory().unwrap();
+    let id = volume_id(&store, "vol-a");
+
+    store.set_volume_nickname(id, Some("Archive 4TB")).unwrap();
+
+    // The drive is renamed in Explorer and reappears at another letter.
+    let mut renamed = volume_info("vol-a", "G:\\");
+    renamed.label = Some("Expansion".to_owned());
+    store.refresh_volume(id, &renamed, 1_700_000_100).unwrap();
+    // And the user picks another folder on it.
+    store.upsert_volume(&renamed, Some(1_700_000_200)).unwrap();
+
+    let read = store.volume(id).unwrap();
+    assert_eq!(read.nickname.as_deref(), Some("Archive 4TB"));
+    assert_eq!(
+        read.label.as_deref(),
+        Some("Expansion"),
+        "the label still follows the OS"
+    );
+}
+
+#[test]
+fn a_blank_nickname_clears_rather_than_storing_an_empty_name() {
+    // Otherwise the UI shows a blank where a name should be, instead of
+    // falling back to the label.
+    let store = Store::open_in_memory().unwrap();
+    let id = volume_id(&store, "vol-a");
+
+    store.set_volume_nickname(id, Some("Archive")).unwrap();
+    store.set_volume_nickname(id, Some("   ")).unwrap();
+    assert_eq!(store.volume(id).unwrap().nickname, None);
+
+    store.set_volume_nickname(id, Some("Archive")).unwrap();
+    store.set_volume_nickname(id, None).unwrap();
+    assert_eq!(store.volume(id).unwrap().nickname, None);
+}
+
+#[test]
+fn a_nickname_is_trimmed_rather_than_stored_with_its_whitespace() {
+    let store = Store::open_in_memory().unwrap();
+    let id = volume_id(&store, "vol-a");
+    store
+        .set_volume_nickname(id, Some("  Archive 4TB "))
+        .unwrap();
+    assert_eq!(
+        store.volume(id).unwrap().nickname.as_deref(),
+        Some("Archive 4TB")
+    );
+}
+
+#[test]
+fn forgetting_a_drive_a_rule_still_uses_is_refused_with_a_count() {
+    // Cascading here would delete backup rules as a side effect of tidying a
+    // drive list, which is not what pressing a button on a drive means.
+    let store = Store::open_in_memory().unwrap();
+    let source = volume_id(&store, "vol-source");
+    let destination = volume_id(&store, "vol-destination");
+
+    let rule = store.create_rule(&sample_spec(source), 1000).unwrap();
+    store
+        .add_destination(
+            rule,
+            &VolumePath {
+                volume: destination,
+                relative: PathBuf::from("Backups"),
+            },
+            0,
+        )
+        .unwrap();
+
+    assert_eq!(store.volume_references(source).unwrap(), 1);
+    assert_eq!(store.volume_references(destination).unwrap(), 1);
+
+    let error = store
+        .delete_volume(destination)
+        .expect_err("a drive in use must not be forgotten");
+    assert!(matches!(error, CoreError::Refused(_)), "{error:?}");
+    assert!(format!("{error}").contains("1 rule"), "{error}");
+    assert_eq!(store.volumes().unwrap().len(), 2, "nothing was removed");
+}
+
+#[test]
+fn an_unused_drive_can_be_forgotten() {
+    let store = Store::open_in_memory().unwrap();
+    let id = volume_id(&store, "vol-a");
+    assert_eq!(store.volume_references(id).unwrap(), 0);
+
+    store.delete_volume(id).unwrap();
+    assert!(store.volumes().unwrap().is_empty());
 }

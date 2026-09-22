@@ -143,13 +143,118 @@ impl Store {
             .map_err(store_err("could not read back the volume id"))
     }
 
+    /// Updates what is known about a volume that is already recorded.
+    ///
+    /// Deliberately not an upsert. [`upsert_volume`](Self::upsert_volume) is
+    /// reached only from the folder picker, which is the consent step that
+    /// lets a drive into Shelv at all (`docs/PLAN.md` §4.2). This is reached
+    /// from a timer, so if it could insert, plugging a drive in would enrol
+    /// it without anyone choosing anything. A row that is not there is
+    /// therefore left alone rather than created.
+    ///
+    /// The identity is never written: it is what says this *is* the same
+    /// volume, and a row whose identity could be rewritten in place would let
+    /// a rule silently change which disk it points at.
+    pub fn refresh_volume(&self, id: VolumeId, info: &VolumeInfo, last_seen_at: i64) -> Result<()> {
+        self.conn
+            .execute(
+                "UPDATE volume SET serial = ?2, label = ?3, filesystem = ?4, drive_type = ?5,
+                                   is_sync_root = ?6, last_mount = ?7, last_seen_at = ?8
+                 WHERE id = ?1",
+                rusqlite::params![
+                    id,
+                    info.serial,
+                    info.label,
+                    info.filesystem,
+                    drive_type_str(info.drive_type),
+                    i64::from(info.is_sync_root),
+                    path_to_db(&info.mount_point),
+                    last_seen_at,
+                ],
+            )
+            .map_err(store_err("could not refresh the volume"))?;
+        Ok(())
+    }
+
+    /// Sets or clears the name the user gave a drive.
+    ///
+    /// Deliberately its own statement rather than a field on
+    /// [`upsert_volume`](Self::upsert_volume) or
+    /// [`refresh_volume`](Self::refresh_volume). Both of those are driven by
+    /// what the operating system reports, and `refresh_volume` runs once a
+    /// second — if either wrote this column, the name the user chose would be
+    /// erased on the next tick.
+    ///
+    /// An empty or whitespace-only name clears it, so the display falls back
+    /// to the label rather than showing a blank where a name should be.
+    pub fn set_volume_nickname(&self, id: VolumeId, nickname: Option<&str>) -> Result<()> {
+        let cleaned = nickname.map(str::trim).filter(|n| !n.is_empty());
+        let n = self
+            .conn
+            .execute(
+                "UPDATE volume SET nickname = ?2 WHERE id = ?1",
+                rusqlite::params![id, cleaned],
+            )
+            .map_err(store_err("could not rename the drive"))?;
+        if n == 0 {
+            return Err(CoreError::NotFound(format!("volume {id}")));
+        }
+        Ok(())
+    }
+
+    /// How many rules use this volume, as a source or as a destination.
+    ///
+    /// Counted so that forgetting a drive can refuse with a reason. The
+    /// foreign keys would refuse it anyway, but as an opaque constraint
+    /// failure — and "this drive is used by 3 rules" is the thing the user
+    /// needs to know.
+    pub fn volume_references(&self, id: VolumeId) -> Result<usize> {
+        self.conn
+            .query_row(
+                "SELECT (SELECT count(*) FROM rule WHERE source_volume = ?1)
+                      + (SELECT count(*) FROM destination WHERE volume_id = ?1)",
+                [id],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(|n| usize::try_from(n).unwrap_or(0))
+            .map_err(store_err("could not count the rules using this drive"))
+    }
+
+    /// Removes a volume Shelv has recorded.
+    ///
+    /// Refuses while any rule still points at it. Cascading here would delete
+    /// backup rules as a side effect of tidying a drive list, which is not
+    /// what anyone pressing a button on a drive means.
+    ///
+    /// Forgetting a drive removes only Shelv's record of it. Nothing on the
+    /// drive is touched, and picking a folder on it again re-registers it
+    /// with the same identity.
+    pub fn delete_volume(&self, id: VolumeId) -> Result<()> {
+        let references = self.volume_references(id)?;
+        if references > 0 {
+            return Err(CoreError::Refused(format!(
+                "this drive is still used by {references} {}; remove or repoint {} first",
+                if references == 1 { "rule" } else { "rules" },
+                if references == 1 { "it" } else { "them" },
+            )));
+        }
+        let n = self
+            .conn
+            .execute("DELETE FROM volume WHERE id = ?1", [id])
+            .map_err(store_err("could not forget the drive"))?;
+        if n == 0 {
+            return Err(CoreError::NotFound(format!("volume {id}")));
+        }
+        Ok(())
+    }
+
     /// Every volume Shelv has recorded, attached or not.
     pub fn volumes(&self) -> Result<Vec<StoredVolume>> {
         let mut stmt = self
             .conn
             .prepare(
                 "SELECT id, identity_kind, identity, serial, label, filesystem, drive_type,
-                        is_sync_root, last_seen_at, last_mount
+                        is_sync_root, last_seen_at, last_mount, nickname
                  FROM volume ORDER BY id",
             )
             .map_err(store_err("could not list volumes"))?;
@@ -165,7 +270,7 @@ impl Store {
         self.conn
             .query_row(
                 "SELECT id, identity_kind, identity, serial, label, filesystem, drive_type,
-                        is_sync_root, last_seen_at, last_mount
+                        is_sync_root, last_seen_at, last_mount, nickname
                  FROM volume WHERE id = ?1",
                 [id],
                 read_volume,
@@ -271,10 +376,10 @@ impl Store {
         self.conn
             .execute(
                 "INSERT INTO rule (name, enabled, source_volume, source_rel, layout, packaging,
-                                   allow_deletions, retention_kind, retention_value, schedule,
+                                   retention_kind, retention_value, schedule,
                                    run_on_connect, catch_up, placeholders, hydrate_budget_bytes,
                                    follow_symlinks, excludes, created_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
                 rusqlite::params![
                     spec.name,
                     i64::from(spec.enabled),
@@ -282,7 +387,6 @@ impl Store {
                     path_to_db(&spec.source.relative),
                     spec.layout,
                     spec.packaging,
-                    i64::from(spec.allow_deletions),
                     retention_kind,
                     retention_value,
                     spec.schedule.to_db_string(),
@@ -309,10 +413,10 @@ impl Store {
             .conn
             .execute(
                 "UPDATE rule SET name = ?2, enabled = ?3, source_volume = ?4, source_rel = ?5,
-                                 layout = ?6, packaging = ?7, allow_deletions = ?8,
-                                 retention_kind = ?9, retention_value = ?10, schedule = ?11,
-                                 run_on_connect = ?12, catch_up = ?13, placeholders = ?14,
-                                 hydrate_budget_bytes = ?15, follow_symlinks = ?16, excludes = ?17
+                                 layout = ?6, packaging = ?7,
+                                 retention_kind = ?8, retention_value = ?9, schedule = ?10,
+                                 run_on_connect = ?11, catch_up = ?12, placeholders = ?13,
+                                 hydrate_budget_bytes = ?14, follow_symlinks = ?15, excludes = ?16
                  WHERE id = ?1",
                 rusqlite::params![
                     id,
@@ -322,7 +426,6 @@ impl Store {
                     path_to_db(&spec.source.relative),
                     spec.layout,
                     spec.packaging,
-                    i64::from(spec.allow_deletions),
                     retention_kind,
                     retention_value,
                     spec.schedule.to_db_string(),
@@ -568,7 +671,7 @@ impl Store {
 }
 
 const RULE_SELECT: &str = "SELECT id, name, enabled, source_volume, source_rel, layout, packaging,
-            allow_deletions, retention_kind, retention_value, schedule, run_on_connect,
+            retention_kind, retention_value, schedule, run_on_connect,
             catch_up, placeholders, hydrate_budget_bytes, follow_symlinks, excludes, created_at
      FROM rule";
 
@@ -659,16 +762,17 @@ fn read_volume(row: &Row<'_>) -> rusqlite::Result<StoredVolume> {
         is_sync_root: row.get::<_, i64>(7)? != 0,
         last_seen_at: row.get(8)?,
         last_mount: row.get::<_, Option<String>>(9)?.map(|s| path_from_db(&s)),
+        nickname: row.get(10)?,
     })
 }
 
 /// Reads a rule row. The outer `rusqlite::Result` covers column access; the
 /// inner [`Result`] covers values `SQLite` accepted but the domain cannot.
 fn read_rule(row: &Row<'_>) -> rusqlite::Result<Result<Rule>> {
-    let schedule_text: String = row.get(10)?;
-    let excludes_text: String = row.get(16)?;
-    let retention_kind: Option<String> = row.get(8)?;
-    let retention_value: Option<u32> = row.get(9)?;
+    let schedule_text: String = row.get(9)?;
+    let excludes_text: String = row.get(15)?;
+    let retention_kind: Option<String> = row.get(7)?;
+    let retention_value: Option<u32> = row.get(8)?;
 
     let Some(schedule) = Schedule::from_db_str(&schedule_text) else {
         return Ok(Err(CoreError::Store(format!(
@@ -686,7 +790,7 @@ fn read_rule(row: &Row<'_>) -> rusqlite::Result<Result<Rule>> {
 
     Ok(Ok(Rule {
         id: row.get(0)?,
-        created_at: row.get(17)?,
+        created_at: row.get(16)?,
         spec: RuleSpec {
             name: row.get(1)?,
             enabled: row.get::<_, i64>(2)? != 0,
@@ -696,14 +800,13 @@ fn read_rule(row: &Row<'_>) -> rusqlite::Result<Result<Rule>> {
             },
             layout: row.get::<_, Layout>(5)?,
             packaging: row.get::<_, Packaging>(6)?,
-            allow_deletions: row.get::<_, i64>(7)? != 0,
             retention: Retention::from_columns(retention_kind.as_deref(), retention_value),
             schedule,
-            run_on_connect: row.get::<_, i64>(11)? != 0,
-            catch_up: row.get::<_, i64>(12)? != 0,
-            placeholders: row.get::<_, PlaceholderPolicy>(13)?,
-            hydrate_budget_bytes: row.get::<_, Option<i64>>(14)?.map(as_u64),
-            follow_symlinks: row.get::<_, i64>(15)? != 0,
+            run_on_connect: row.get::<_, i64>(10)? != 0,
+            catch_up: row.get::<_, i64>(11)? != 0,
+            placeholders: row.get::<_, PlaceholderPolicy>(12)?,
+            hydrate_budget_bytes: row.get::<_, Option<i64>>(13)?.map(as_u64),
+            follow_symlinks: row.get::<_, i64>(14)? != 0,
             excludes,
         },
     }))

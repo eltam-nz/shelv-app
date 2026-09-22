@@ -51,6 +51,78 @@ a concrete implementation. `scripts/check-platform-boundary.sh` fails CI if the
 | `scheduler/` | Cron evaluation, catch-up, run-on-connect, the run queue. **M3.** |
 | `safety/` | Path canonicalisation and the destructive-operation guards. **M1.** |
 | `volumes/` | Volume tracking and identity verification. **M1.** |
+| `watch/` | Notices that the set of attached drives has changed, and reports it only when it really has. |
+
+### Where Shelv keeps things
+
+Everything lives under one product-named folder in the user's local
+application data — `%LOCALAPPDATA%\Shelv` on Windows:
+
+```
+Shelv\
+    shelv.db          rules, destinations, tags, drives, run history
+    shelv.db-wal      SQLite's write-ahead log
+    shelv.db-shm
+    EBWebView\        the webview's profile: the window's own preferences
+```
+
+Neither path involves the executable, which is why replacing the binary
+keeps every rule. That is the point: an update must not lose someone's
+backup configuration.
+
+The webview's profile takes a deliberate detour to get there. Tauri files it
+under the reverse-DNS identifier by default — `%LOCALAPPDATA%\nz.eltam.shelv`
+— which would leave Shelv's data in two differently named sibling folders,
+so anyone clearing it out finds one and leaves the other. A `dataDirectory`
+in `tauri.conf.json` cannot fix it either: that value is resolved relative to
+`<local data>/<window label>`, and an absolute one is discarded. So the
+window is built in `src-tauri/src/lib.rs` rather than declared in the config,
+purely so `data_directory` can point at the folder the database was opened
+from.
+
+That has one consequence worth knowing: the window's **label is
+load-bearing**. `capabilities/default.json` scopes its permissions to
+`windows: ["main"]`, so a window under any other label starts with none of
+them. The cost is `core:default`, and within it `core:event`, which is what
+`listen` needs — so the rule table and drives pane would stop following
+attached drives, with no error to say why. (Not the folder picker: that runs
+`dialog()` from Rust inside `pick_folder`, and the ACL gates commands
+invoked from the webview rather than plugin calls the backend makes itself.)
+Nothing fails loudly if the label drifts, so `MAIN_WINDOW_LABEL` is a
+constant and `security_tests` checks it against the manifest.
+
+The About panel reports both paths, through a `data_locations` command that
+reads them from the same directories the app actually opened rather than
+rebuilding them from the product name.
+
+### Naming a drive
+
+A drive is shown by the first of these that exists: the **nickname** the user
+set, the **filesystem label** the OS reports, `Unnamed drive <serial>`, the
+current mount point, the last mount point. The serial comes before the mount
+point because it identifies the drive and the mount point does not — two
+unlabelled drives that have taken turns in the same port would otherwise both
+be called `E:\`, which does not merely fail to help, it says they are the
+same drive.
+
+The nickname is stored against the volume identity and is **display only**.
+`upsert_volume` and `refresh_volume` are both driven by what the OS reports
+and neither touches the column, so the once-a-second refresh cannot erase a
+name the user chose.
+
+A destination is rendered drive-first — `Archive 4TB (E:)` over
+`Backups\Lightroom` — because that is what is stored. The drive letter is not
+part of a destination at all, and is shown only while the drive is attached.
+
+### The drives pane
+
+A resizable split below the rules table, toggled from the top bar, listing
+every **recorded** drive with its nickname, Explorer label, current letter,
+availability and how many rules use it. Attached-but-unrecorded drives are
+deliberately not enumerated: **Add drive…** opens the same native picker
+every other location goes through, which is the OS's own consent step, so
+there is only ever one way a drive enters Shelv. Forgetting a drive is
+refused while any rule points at it.
 
 ## Volume identity
 
@@ -77,6 +149,22 @@ suggest, because they need different words and different actions:
 | `Refused` | Attached, but a network share, optical media or unclassifiable. Plugging in does not help. |
 | `IdentityMismatch` | Something *is* mounted where this destination used to be, but it is a different volume. Never written to. |
 | `Unverifiable` | Attached and of a permitted type, but the system reports nothing that identifies it across reconnections. Cannot be told apart from a different drive in the same place, so never written to. |
+
+Availability is re-evaluated once a second by a background thread in the Tauri
+shell, which emits `shelv://volumes-changed` to the window only when the
+result differs from the previous poll — so the table follows a drive being
+plugged in within a second without re-rendering the rest of the time.
+
+`WM_DEVICECHANGE` is the better primitive and is not used: it is Windows-only,
+needs a subclassed window procedure and therefore `unsafe` outside the
+platform boundary, and cannot be exercised on any other host. Swapping the
+timer for it later means calling `VolumeWatch::poll` from that event instead
+of from a tick; nothing else moves.
+
+Each poll also re-reads the live label, filesystem and drive type of every
+attached volume and overlays them on what is stored, so a drive renamed in
+Explorer shows its new name immediately. The write-back is update-only: a
+volume enters the database by being picked, never by being attached.
 
 `IdentityMismatch` is the dangerous case. Collapsing it into "unavailable"
 would read as "unplugged" and hide the situation that can destroy data, so it

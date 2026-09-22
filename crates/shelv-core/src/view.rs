@@ -104,6 +104,57 @@ impl RuleRow {
     }
 }
 
+/// One row of the drives table.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
+#[ts(export, export_to = "../../../src/types/")]
+pub struct DriveRow {
+    /// The drive and whether it can be written to right now.
+    pub status: VolumeStatus,
+    /// How many rules use it, as a source or as a destination.
+    ///
+    /// Shown so the user can see what forgetting a drive would break before
+    /// they try, rather than being told only when it is refused.
+    #[ts(type = "number")]
+    pub rule_count: u32,
+}
+
+/// Every drive Shelv has recorded, with its current status and use.
+///
+/// Recorded drives only. A drive enters the database by the user picking a
+/// folder on it through the operating system's dialog (`docs/PLAN.md` §4.2),
+/// and enumerating attached-but-unknown drives here would hand the frontend
+/// a list of the user's hardware for no gain — the picker is itself the OS's
+/// list of what is attached, so that is where a new drive is added from.
+pub fn drive_rows(store: &Store, fs: &dyn PlatformFs) -> Result<Vec<DriveRow>> {
+    volume_statuses(store, fs)?
+        .into_iter()
+        .map(|status| {
+            let rule_count = store.volume_references(status.volume.id)?;
+            Ok(DriveRow {
+                status,
+                rule_count: u32::try_from(rule_count).unwrap_or(u32::MAX),
+            })
+        })
+        .collect()
+}
+
+/// Where Shelv keeps what it remembers.
+///
+/// Both paths are derived from the user's local application data folder, not
+/// from where the executable sits — which is why replacing the binary keeps
+/// every rule, drive and nickname. That is the intent: an update must not
+/// lose someone's backup configuration.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
+#[ts(export, export_to = "../../../src/types/")]
+pub struct DataLocations {
+    /// The `SQLite` database: rules, destinations, tags, drives and history.
+    pub database: PathBuf,
+    /// The webview's profile directory, which holds the window's own
+    /// preferences. Filled in by the shell, which is what decides where the
+    /// webview keeps it.
+    pub webview_profile: PathBuf,
+}
+
 /// Classifies every recorded volume against what is attached right now.
 pub fn volume_statuses(store: &Store, fs: &dyn PlatformFs) -> Result<Vec<VolumeStatus>> {
     let attached = fs.volumes()?;
@@ -150,11 +201,63 @@ fn classify(volume: StoredVolume, attached: &[crate::platform::VolumeInfo]) -> V
         Availability::Refused
     };
 
+    // What the drive says about itself *now* beats what was recorded when a
+    // folder was last picked on it. A drive renamed in Explorer, reformatted
+    // to a different filesystem, or moved from a USB caddy into a bay is
+    // still the same volume — the identity says so — but the stored label,
+    // filesystem and drive type are all now wrong, and the label is the name
+    // the table puts in front of the user. Rows would keep showing the old
+    // name until the user happened to pick another folder on that drive.
+    //
+    // Persisting the change is a separate matter, handled by the caller
+    // (`refresh_stored_volumes`), because classification must stay a pure
+    // function the UI can call as often as it likes.
     VolumeStatus {
         availability,
         mount_point: Some(live.mount_point.clone()),
-        volume,
+        volume: StoredVolume {
+            label: live.label.clone(),
+            filesystem: live.filesystem.clone(),
+            drive_type: live.drive_type,
+            serial: live.serial.clone(),
+            is_sync_root: live.is_sync_root,
+            last_mount: Some(live.mount_point.clone()),
+            ..volume
+        },
     }
+}
+
+/// Writes back any volume whose live details differ from what is recorded.
+///
+/// Only ever an update. A volume enters the database by being picked
+/// (`docs/PLAN.md` §4.2) and nothing here may add one, or merely attaching a
+/// drive would register it — which is exactly the thing picking exists to
+/// gate.
+///
+/// Returns how many rows changed, so a caller that runs on a timer can log
+/// or skip on zero rather than writing every tick.
+pub fn refresh_stored_volumes(store: &Store, fs: &dyn PlatformFs, now: i64) -> Result<usize> {
+    let attached = fs.volumes()?;
+    let mut changed = 0;
+
+    for recorded in store.volumes()? {
+        let Some(live) = attached.iter().find(|a| a.identity == recorded.identity) else {
+            continue;
+        };
+        let differs = recorded.label != live.label
+            || recorded.filesystem != live.filesystem
+            || recorded.drive_type != live.drive_type
+            || recorded.serial != live.serial
+            || recorded.is_sync_root != live.is_sync_root
+            || recorded.last_mount.as_ref() != Some(&live.mount_point);
+        if !differs {
+            continue;
+        }
+        store.refresh_volume(recorded.id, live, now)?;
+        changed += 1;
+    }
+
+    Ok(changed)
 }
 
 /// Builds every row of the rule table.
@@ -207,6 +310,7 @@ fn unknown_volume(id: crate::model::VolumeId) -> VolumeStatus {
             },
             serial: None,
             label: None,
+            nickname: None,
             filesystem: None,
             drive_type: DriveType::Unknown,
             is_sync_root: false,
@@ -254,6 +358,7 @@ mod tests {
             identity: identity(value),
             serial: None,
             label: Some("Backup".to_owned()),
+            nickname: None,
             filesystem: Some("exFAT".to_owned()),
             drive_type: DriveType::Removable,
             is_sync_root: false,
@@ -269,6 +374,26 @@ mod tests {
         assert_eq!(status.availability, Availability::Available);
         assert_eq!(status.mount_point, Some(PathBuf::from("E:\\")));
         assert!(status.availability.is_writable());
+    }
+
+    #[test]
+    fn a_renamed_drive_reports_its_new_name_immediately() {
+        // Renaming a drive in Explorer must not leave the table showing the
+        // old name until the user happens to pick another folder on it.
+        let mut live = info("vol-a", "E:\\", DriveType::Removable);
+        live.label = Some("Photos 2026".to_owned());
+
+        let status = classify(stored(1, "vol-a", Some("E:\\")), &[live]);
+        assert_eq!(status.volume.label.as_deref(), Some("Photos 2026"));
+    }
+
+    #[test]
+    fn a_disconnected_drive_keeps_the_last_name_it_was_seen_under() {
+        // There is nothing live to read a name from, and "Unnamed" would be
+        // a worse answer than the name the user last saw.
+        let status = classify(stored(1, "vol-a", Some("E:\\")), &[]);
+        assert_eq!(status.availability, Availability::Disconnected);
+        assert_eq!(status.volume.label.as_deref(), Some("Backup"));
     }
 
     #[test]

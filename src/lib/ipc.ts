@@ -13,10 +13,13 @@
  */
 
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 
 import type {
   CoreError,
+  DataLocations,
   DestinationId,
+  DriveRow,
   PickedFolder,
   Rule,
   RuleId,
@@ -26,6 +29,7 @@ import type {
   Run,
   Tag,
   TagId,
+  VolumeId,
   VolumePath,
   VolumeStatus,
 } from "../types";
@@ -82,6 +86,25 @@ async function callVoid(cmd: string, args?: Record<string, unknown>): Promise<vo
 
 /** The running application version. */
 export const appVersion = (): Promise<string> => call<string>("app_version");
+
+/**
+ * Where Shelv keeps its database and the window's own preferences.
+ *
+ * Reported by the backend from the directories it actually opened, rather
+ * than rebuilt here, so the About panel cannot name a folder the app is not
+ * using.
+ */
+export const dataLocations = (): Promise<DataLocations> =>
+  call<DataLocations>("data_locations");
+
+/**
+ * Opens Shelv's data folder in the system file manager.
+ *
+ * Takes no path. A general "open this path" capability would let this side
+ * ask the operating system to launch anything at all, which is the widening
+ * the id-only command surface exists to prevent (docs/PLAN.md §4, T1).
+ */
+export const revealDataFolder = (): Promise<void> => callVoid("reveal_data_folder");
 
 /** Every rule, with tags, destinations, availability and last result. */
 export const listRules = (): Promise<RuleRow[]> => call<RuleRow[]>("list_rules");
@@ -188,6 +211,46 @@ export const setRuleTags = (rule: RuleId, tags: TagId[]): Promise<void> =>
 export const listVolumes = (): Promise<VolumeStatus[]> =>
   call<VolumeStatus[]>("list_volumes");
 
+/**
+ * Every drive Shelv has recorded, with its status and how many rules use it.
+ *
+ * Recorded drives only. A drive is added by picking a folder on it through
+ * `pickFolder`, which is the operating system's own consent step, so this
+ * never enumerates the user's attached hardware.
+ */
+export const listDrives = (): Promise<DriveRow[]> => call<DriveRow[]>("list_drives");
+
+/**
+ * Sets or clears the name the user gave a drive.
+ *
+ * Display only. Nothing resolves or writes on a nickname — the volume
+ * identity remains the only key anything is matched by.
+ */
+export const setDriveNickname = (id: VolumeId, nickname: string | null): Promise<void> =>
+  callVoid("set_drive_nickname", { id, nickname });
+
+/**
+ * Removes Shelv's record of a drive.
+ *
+ * Rejects with a `refused` error while any rule still points at it. Nothing
+ * on the drive itself is touched.
+ */
+export const forgetDrive = (id: VolumeId): Promise<void> =>
+  callVoid("forget_drive", { id });
+
 /** A rule's run history, newest first. */
 export const listRuns = (rule: RuleId, limit: number): Promise<Run[]> =>
   call<Run[]>("list_runs", { rule, limit });
+
+/**
+ * Runs `onChange` whenever the set of attached drives changes.
+ *
+ * The backend polls and emits only on a real change (see
+ * `shelv_core::watch`), so this fires when a drive is plugged in, pulled out
+ * or renamed, and not once a second. Resolves to an unlisten function.
+ */
+export async function onVolumesChanged(onChange: () => void): Promise<() => void> {
+  return listen("shelv://volumes-changed", () => {
+    onChange();
+  });
+}

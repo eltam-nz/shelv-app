@@ -27,6 +27,12 @@ pub struct PickedFolder {
     pub path: VolumePath,
     /// The volume's label, for display.
     pub volume_label: Option<String>,
+    /// The volume serial, where the platform reports one.
+    ///
+    /// Display only, and only as a fallback: it is what lets two unlabelled
+    /// drives that have taken turns in the same port be told apart in the
+    /// editor, which would otherwise call both of them `E:\`.
+    pub volume_serial: Option<String>,
     /// Where the volume is mounted right now.
     ///
     /// **Display only.** It is returned so the editor can show the user the
@@ -84,6 +90,7 @@ pub fn resolve_picked_folder(
     Ok(PickedFolder {
         path: VolumePath { volume, relative },
         volume_label: info.label.clone(),
+        volume_serial: info.serial.clone(),
         mount_point: info.mount_point.clone(),
         display_path: absolute.display().to_string(),
     })

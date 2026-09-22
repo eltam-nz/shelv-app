@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import { formatLocation, volumeName } from "./volumes";
+import {
+  driveName,
+  formatLocation,
+  fullPath,
+  identityLabel,
+  joinPath,
+  volumeName,
+} from "./volumes";
 import type { VolumeStatus } from "../types";
 
 function status(over: Partial<VolumeStatus["volume"]> & { mount?: string | null }) {
@@ -11,6 +18,7 @@ function status(over: Partial<VolumeStatus["volume"]> & { mount?: string | null 
       identity: { kind: "linux_fs_uuid" as const, value: "u" },
       serial: null,
       label: null,
+      nickname: null,
       filesystem: "ext4",
       drive_type: "removable" as const,
       is_sync_root: false,
@@ -30,7 +38,7 @@ describe("volumeName", () => {
     );
   });
 
-  it("falls back to where the drive is mounted", () => {
+  it("falls back to where the drive is mounted when nothing else names it", () => {
     // Plenty of drives have no label — a freshly formatted one usually does
     // not — and a bare "?" tells the reader nothing about which disk a rule
     // points at.
@@ -57,5 +65,107 @@ describe("formatLocation", () => {
 
   it("shows only the drive when the location is its root", () => {
     expect(formatLocation(status({ label: "Archive" }), "")).toBe("Archive");
+  });
+});
+
+describe("joinPath", () => {
+  it("uses a backslash when the mount point does", () => {
+    expect(joinPath("E:\\", "Backups\\Photos")).toBe("E:\\Backups\\Photos");
+  });
+
+  it("uses a forward slash when the mount point does", () => {
+    expect(joinPath("/media/backup", "Backups")).toBe("/media/backup/Backups");
+  });
+
+  it("does not double the separator", () => {
+    // `E:\` and `/` already end in one, which is exactly the common case.
+    expect(joinPath("E:\\", "Backups")).toBe("E:\\Backups");
+    expect(joinPath("/", "srv/data")).toBe("/srv/data");
+  });
+
+  it("yields the mount point itself at the volume root", () => {
+    expect(joinPath("E:\\", "")).toBe("E:\\");
+  });
+});
+
+describe("fullPath", () => {
+  it("uses where the drive is now", () => {
+    expect(fullPath(status({ mount: "E:\\" }), "Backups")).toBe("E:\\Backups");
+  });
+
+  it("falls back to where it was last seen when unplugged", () => {
+    // Where the backup went is still worth showing for a drive in a drawer.
+    expect(fullPath(status({ mount: null, last_mount: "E:\\" }), "Backups")).toBe(
+      "E:\\Backups",
+    );
+  });
+
+  it("is null when the drive has never been seen anywhere", () => {
+    expect(fullPath(status({ mount: null }), "Backups")).toBeNull();
+  });
+});
+
+describe("driveName", () => {
+  it("prefers the serial over the mount point for an unlabelled drive", () => {
+    // Two unlabelled drives that have taken turns in the same port would
+    // both be called "E:\\", which does not merely fail to help — it says
+    // they are the same drive.
+    expect(driveName({ label: null, serial: "1A2B3C4D", mount: "E:\\" })).toBe(
+      "Unnamed drive 1A2B3C4D",
+    );
+  });
+
+  it("falls back to the mount point when there is no serial either", () => {
+    expect(driveName({ label: null, serial: null, mount: "/media/backup" })).toBe(
+      "/media/backup",
+    );
+  });
+});
+
+describe("driveName precedence", () => {
+  it("puts the name the user chose above everything the system reports", () => {
+    // It is the only one of these they chose, the only one that stays put
+    // when the drive is relabelled or comes back at another letter, and the
+    // only one that can tell two identical drives apart.
+    expect(
+      driveName({
+        nickname: "Archive 4TB",
+        label: "Expansion",
+        serial: "1A2B3C4D",
+        mount: "E:\\",
+      }),
+    ).toBe("Archive 4TB");
+  });
+
+  it("falls back to the Explorer label when no nickname is set", () => {
+    expect(driveName({ nickname: null, label: "Expansion", mount: "E:\\" })).toBe(
+      "Expansion",
+    );
+  });
+});
+
+describe("identityLabel", () => {
+  it("keeps only the GUID from a Windows volume path", () => {
+    expect(
+      identityLabel({
+        kind: "windows_volume_guid",
+        value: "\\\\?\\Volume{9f1c2d3e-4a5b-6c7d-8e9f-0a1b2c3d4e5f}\\",
+      }),
+    ).toBe("{9f1c2d3e-4a5b-6c7d-8e9f-0a1b2c3d4e5f}");
+  });
+
+  it("shows a Linux UUID unchanged", () => {
+    expect(
+      identityLabel({
+        kind: "linux_fs_uuid",
+        value: "6f3a1b2c-4d5e-6f70-8192-a3b4c5d6e7f8",
+      }),
+    ).toBe("6f3a1b2c-4d5e-6f70-8192-a3b4c5d6e7f8");
+  });
+
+  it("falls back to the whole value when there is no braced part", () => {
+    expect(identityLabel({ kind: "unverified", value: "/media/backup" })).toBe(
+      "/media/backup",
+    );
   });
 });

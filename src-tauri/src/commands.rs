@@ -23,7 +23,9 @@ use shelv_core::model::{Rule, RuleId, RuleSpec, Run, Tag, TagId, VolumePath};
 use shelv_core::platform::PlatformFs;
 use shelv_core::safety::{check_rule, RuleProblem};
 use shelv_core::store::Store;
-use shelv_core::view::{rule_rows, volume_statuses, RuleRow, VolumeStatus};
+use shelv_core::view::{
+    drive_rows, rule_rows, volume_statuses, DataLocations, DriveRow, RuleRow, VolumeStatus,
+};
 use shelv_core::volumes::{resolve_picked_folder, PickedFolder};
 use shelv_core::{CoreError, Result};
 use tauri::ipc::Invoke;
@@ -44,6 +46,20 @@ impl AppState {
             store: Mutex::new(store),
             fs,
         }
+    }
+
+    /// Runs one watcher tick against the store.
+    ///
+    /// Exposed so the background watcher can reuse the same lock discipline
+    /// as the commands rather than opening a second connection: two writers
+    /// to one `SQLite` file is a busy-timeout waiting to happen, and the
+    /// watcher writes whenever a drive is renamed.
+    pub fn poll_volumes(
+        &self,
+        watch: &mut shelv_core::watch::VolumeWatch,
+        now: i64,
+    ) -> Result<shelv_core::watch::Poll> {
+        self.with_store(|store| watch.poll(store, self.fs.as_ref(), now))
     }
 
     /// Runs `f` against the store.
@@ -72,6 +88,51 @@ impl std::fmt::Debug for AppState {
 #[tauri::command]
 fn app_version() -> &'static str {
     env!("CARGO_PKG_VERSION")
+}
+
+/// Where Shelv keeps its database and the window's own preferences.
+///
+/// Derived from the same `data_dir` the window and the store were opened
+/// from, rather than rebuilt from the product name, so the About panel
+/// cannot end up naming a folder the app is not actually using.
+#[tauri::command]
+fn data_locations(state: State<'_, AppState>) -> Result<DataLocations> {
+    let data_dir = state.fs.data_dir()?;
+    Ok(DataLocations {
+        database: Store::default_path(state.fs.as_ref())?,
+        webview_profile: crate::webview_profile_dir(&data_dir),
+    })
+}
+
+/// Opens Shelv's data folder in the system file manager.
+///
+/// Takes **no path**, and that is the point. Granting the frontend a
+/// general "open this path" capability would let a compromised `WebView` ask
+/// the operating system to launch anything it liked, which is precisely the
+/// widening the id-only command surface exists to prevent (`docs/PLAN.md`
+/// §4, T1). This opens one directory, chosen here.
+#[tauri::command]
+fn reveal_data_folder(state: State<'_, AppState>) -> Result<()> {
+    let data_dir = state.fs.data_dir()?;
+
+    // The folder may not exist yet on a first run that has not written
+    // anything. Creating it is friendlier than opening a file manager on
+    // nothing, and it is the same directory the store would create anyway.
+    std::fs::create_dir_all(&data_dir)?;
+
+    let program = if cfg!(windows) {
+        "explorer.exe"
+    } else {
+        "xdg-open"
+    };
+    std::process::Command::new(program)
+        .arg(&data_dir)
+        .spawn()
+        // Explorer exits non-zero in cases where it has still done the right
+        // thing, so the child is deliberately not waited on: whether the
+        // window appeared is the user's to see, not ours to adjudicate.
+        .map_err(|e| CoreError::Io(format!("could not open {}: {e}", data_dir.display())))?;
+    Ok(())
 }
 
 /// Every rule, with its tags, destinations, availability and last result.
@@ -245,6 +306,42 @@ fn list_volumes(state: State<'_, AppState>) -> Result<Vec<VolumeStatus>> {
     state.with_store(|store| volume_statuses(store, state.fs.as_ref()))
 }
 
+/// Every drive Shelv has recorded, with its status and how many rules use it.
+///
+/// This is what the drives pane renders. Only recorded drives: a drive is
+/// added by picking a folder on it through `pick_folder`, which is the
+/// operating system's own consent step, so there is no second way in and
+/// nothing here enumerates the user's attached hardware.
+#[tauri::command]
+fn list_drives(state: State<'_, AppState>) -> Result<Vec<DriveRow>> {
+    state.with_store(|store| drive_rows(store, state.fs.as_ref()))
+}
+
+/// Sets or clears the name the user gave a drive.
+///
+/// Display only. Nothing resolves or writes on a nickname — the volume
+/// identity remains the only key anything is matched by, because a name that
+/// decided where a backup went would reintroduce the wrong-drive failure
+/// (`docs/PLAN.md` §4, T3).
+#[tauri::command]
+fn set_drive_nickname(
+    state: State<'_, AppState>,
+    id: shelv_core::model::VolumeId,
+    nickname: Option<String>,
+) -> Result<()> {
+    state.with_store(|store| store.set_volume_nickname(id, nickname.as_deref()))
+}
+
+/// Removes Shelv's record of a drive.
+///
+/// Refused while any rule still points at it. Nothing on the drive itself is
+/// touched, and picking a folder on it again re-registers it under the same
+/// identity.
+#[tauri::command]
+fn forget_drive(state: State<'_, AppState>, id: shelv_core::model::VolumeId) -> Result<()> {
+    state.with_store(|store| store.delete_volume(id))
+}
+
 /// A rule's run history, newest first.
 #[tauri::command]
 fn list_runs(state: State<'_, AppState>, rule: RuleId, limit: u32) -> Result<Vec<Run>> {
@@ -312,7 +409,7 @@ fn refuse_if_unsafe(
 ///
 /// A clock before 1970 yields 0 rather than panicking; a wrong timestamp is
 /// a cosmetic problem, an aborted backup is not.
-fn now() -> i64 {
+pub fn now() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX))
@@ -325,6 +422,8 @@ fn now() -> i64 {
 pub fn handlers<R: Runtime>() -> impl Fn(Invoke<R>) -> bool + Send + Sync + 'static {
     tauri::generate_handler![
         app_version,
+        data_locations,
+        reveal_data_folder,
         pick_folder,
         validate_rule,
         list_rules,
@@ -340,6 +439,9 @@ pub fn handlers<R: Runtime>() -> impl Fn(Invoke<R>) -> bool + Send + Sync + 'sta
         delete_tag,
         set_rule_tags,
         list_volumes,
+        list_drives,
+        set_drive_nickname,
+        forget_drive,
         list_runs,
     ]
 }

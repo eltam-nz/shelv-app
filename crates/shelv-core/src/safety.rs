@@ -360,7 +360,6 @@ mod tests {
             source,
             layout: Layout::Mirror,
             packaging: Packaging::Files,
-            allow_deletions: false,
             retention: Retention::Unlimited,
             schedule: Schedule::Manual,
             run_on_connect: true,

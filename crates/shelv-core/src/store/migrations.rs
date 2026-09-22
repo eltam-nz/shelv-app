@@ -21,14 +21,26 @@ struct Migration {
 }
 
 /// Every migration, in order.
-const MIGRATIONS: &[Migration] = &[Migration {
-    version: 1,
-    name: "initial schema",
-    sql: include_str!("../../migrations/0001_initial.sql"),
-}];
+const MIGRATIONS: &[Migration] = &[
+    Migration {
+        version: 1,
+        name: "initial schema",
+        sql: include_str!("../../migrations/0001_initial.sql"),
+    },
+    Migration {
+        version: 2,
+        name: "layout implies deletions",
+        sql: include_str!("../../migrations/0002_layout_implies_deletions.sql"),
+    },
+    Migration {
+        version: 3,
+        name: "volume nickname",
+        sql: include_str!("../../migrations/0003_volume_nickname.sql"),
+    },
+];
 
 /// The schema version this build expects.
-pub const LATEST_VERSION: i64 = 1;
+pub const LATEST_VERSION: i64 = 3;
 
 /// Applies any migrations the database has not yet seen.
 ///
@@ -114,6 +126,72 @@ mod tests {
         assert_eq!(migrate(&mut conn).unwrap(), LATEST_VERSION);
         // Running again must be a no-op rather than re-applying DDL.
         assert_eq!(migrate(&mut conn).unwrap(), LATEST_VERSION);
+    }
+
+    #[test]
+    fn an_existing_v1_database_upgrades_in_place() {
+        // The upgrade path real users take, and the one no fresh-install
+        // test exercises: v1 shipped, so a database already carrying
+        // `allow_deletions` has to survive the column being dropped with its
+        // rules intact. It also pins that the bundled SQLite is new enough
+        // for ALTER TABLE ... DROP COLUMN (3.35+).
+        let mut conn = Connection::open_in_memory().unwrap();
+        apply_up_to(&mut conn, 1);
+        conn.execute_batch(
+            "INSERT INTO volume (identity_kind, identity, drive_type)
+             VALUES ('linux_fs_uuid', 'uuid-1', 'removable');
+             INSERT INTO rule (name, source_volume, source_rel, layout, packaging,
+                               allow_deletions, schedule, created_at)
+             VALUES ('Photos', 1, 'Pictures', 'mirror', 'files', 1, 'weekly', 1000);",
+        )
+        .unwrap();
+
+        assert_eq!(migrate(&mut conn).unwrap(), LATEST_VERSION);
+
+        let name: String = conn
+            .query_row("SELECT name FROM rule", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(name, "Photos", "the rule must survive the migration");
+        assert!(
+            conn.query_row("SELECT allow_deletions FROM rule", [], |row| row
+                .get::<_, i64>(0))
+                .is_err(),
+            "the column should be gone"
+        );
+    }
+
+    /// Brings a connection to a given schema version, as a shipped build of
+    /// that version would have left it.
+    fn apply_up_to(conn: &mut Connection, version: i64) {
+        for migration in MIGRATIONS.iter().filter(|m| m.version <= version) {
+            let tx = conn.transaction().unwrap();
+            apply(&tx, migration).unwrap();
+            tx.commit().unwrap();
+        }
+    }
+
+    #[test]
+    fn a_v2_database_gains_the_nickname_column_without_losing_its_drives() {
+        // Somebody who installed the previous build already has drives
+        // recorded. The nickname column arriving must not disturb them, and
+        // must arrive empty rather than guessing a name.
+        let mut conn = Connection::open_in_memory().unwrap();
+        apply_up_to(&mut conn, 2);
+        conn.execute_batch(
+            "INSERT INTO volume (identity_kind, identity, label, drive_type)
+             VALUES ('linux_fs_uuid', 'uuid-1', 'Expansion', 'removable');",
+        )
+        .unwrap();
+
+        assert_eq!(migrate(&mut conn).unwrap(), LATEST_VERSION);
+
+        let (label, nickname): (String, Option<String>) = conn
+            .query_row("SELECT label, nickname FROM volume", [], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })
+            .unwrap();
+        assert_eq!(label, "Expansion", "the drive must survive the migration");
+        assert_eq!(nickname, None, "no nickname is not the same as a guess");
     }
 
     #[test]

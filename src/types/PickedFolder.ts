@@ -15,6 +15,14 @@ path: VolumePath,
  */
 volume_label: string | null, 
 /**
+ * The volume serial, where the platform reports one.
+ *
+ * Display only, and only as a fallback: it is what lets two unlabelled
+ * drives that have taken turns in the same port be told apart in the
+ * editor, which would otherwise call both of them `E:\`.
+ */
+volume_serial: string | null, 
+/**
  * Where the volume is mounted right now.
  *
  * **Display only.** It is returned so the editor can show the user the
