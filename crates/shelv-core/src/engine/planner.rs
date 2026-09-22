@@ -717,6 +717,16 @@ mod tests {
         assert!(matches!(error, CoreError::Io(_)), "{error:?}");
     }
 
+    // Unix only, because the situation cannot be built on Windows: NTFS
+    // will not hold `Photo.RAW` and `photo.raw` in one directory, so the
+    // second write replaces the first and the test would be asserting
+    // against a tree it failed to create. What is under test is the
+    // `CaseSensitivity::Sensitive` branch, which is ordinary Rust and is
+    // exercised here on a filesystem that can actually represent it. Its
+    // companion below — the insensitive branch, which is the one Windows
+    // actually takes — puts the two names in *different* directories and
+    // runs everywhere.
+    #[cfg(unix)]
     #[test]
     fn two_names_differing_only_in_case_do_not_collide_on_a_sensitive_volume() {
         let source = tempfile::tempdir().unwrap();
