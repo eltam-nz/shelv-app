@@ -356,6 +356,43 @@ goes into the run's error text, which is what the history shows.
 who has read it and pressed the button has already made this decision with
 the numbers on screen.
 
+### Starting a run nobody asked for
+
+`scheduler::sweep` reads the store and the attached volumes and returns the
+rules that should start. It writes nothing and starts nothing, so what the
+scheduler will do is testable without a scheduler.
+
+There are two occasions to look, and they ask different questions:
+
+- **Every fifteen minutes.** Periods are calendar days at the finest, so a
+  tick this slow is still far finer than any of them, and it lets a laptop's
+  disk stay asleep.
+- **When a drive appears.** For an occasionally-connected drive this is the
+  trigger that matters (`docs/PLAN.md` §1.1d). A rule set to run on connect
+  backs up when the drive turns up **even if its period has not passed** —
+  the drive is here now and may not be on the first of the month. A one-hour
+  floor keeps a loose cable from queueing a run on every reconnection.
+  Watching for a drive *appearing*, rather than reacting to any change, is
+  what keeps unplugging one — or renaming it — from starting a backup.
+
+A rule that is due but cannot reach its drives is **left out, not queued to
+fail**: its moment comes when the drive appears. Anything that changes what
+is due — a rule created or edited — nudges the scheduler rather than waiting
+out the tick.
+
+**Scheduled runs queue; manual ones do not.** The scheduler has nobody to
+tell that a run was declined, so its rules wait their turn, deduplicated by
+rule — a rule that is due *and* has just had its drive plugged in is one
+backup. Backup Now has somebody watching, and a place in a line whose length
+they cannot see is worse than an answer, so it is still refused while another
+run is going. The queue moves on whatever happened to the run in front of it;
+a failure must not strand the rules behind it.
+
+The history records which occasion started a run: `schedule`, `on_connect`,
+or `catch_up` when the rule had been due for more than one period. The run is
+no different — the word is there so someone can tell why a backup happened on
+a Tuesday afternoon.
+
 ## Volume identity
 
 The single most important decision in the data model, because getting it wrong

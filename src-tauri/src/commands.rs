@@ -56,6 +56,22 @@ impl AppState {
         }
     }
 
+    /// Asks the scheduler which rules should start now.
+    ///
+    /// Takes the shared connection rather than opening one: a sweep is a
+    /// handful of reads, not a backup, and it runs on the scheduler thread
+    /// between ticks.
+    pub fn sweep(
+        &self,
+        zone: &dyn shelv_core::platform::LocalTime,
+        now: i64,
+        reason: shelv_core::scheduler::Sweep,
+    ) -> Result<Vec<shelv_core::scheduler::Ready>> {
+        self.with_store(|store| {
+            shelv_core::scheduler::sweep(store, self.fs.as_ref(), zone, now, reason)
+        })
+    }
+
     /// Runs a rule, on the calling thread.
     ///
     /// Opens its **own** database connection rather than taking the one the
@@ -228,47 +244,60 @@ fn validate_rule(
 /// standing instruction: by the time the engine acts on it, whoever wrote it
 /// is usually not watching.
 #[tauri::command]
-fn create_rule(
+fn create_rule<R: Runtime>(
+    app: AppHandle<R>,
     state: State<'_, AppState>,
     spec: RuleSpec,
     destinations: Vec<VolumePath>,
     tags: Vec<TagId>,
 ) -> Result<RuleId> {
-    state.with_store(|store| {
-        refuse_if_unsafe(store, state.fs.as_ref(), &spec, &destinations)?;
-        let id = store.create_rule(&spec, now())?;
-        for (order, destination) in destinations.iter().enumerate() {
-            store.add_destination(id, destination, i64::try_from(order).unwrap_or(i64::MAX))?;
-        }
-        store.set_rule_tags(id, &tags)?;
-        Ok(id)
-    })
+    state
+        .with_store(|store| {
+            refuse_if_unsafe(store, state.fs.as_ref(), &spec, &destinations)?;
+            let id = store.create_rule(&spec, now())?;
+            for (order, destination) in destinations.iter().enumerate() {
+                store.add_destination(id, destination, i64::try_from(order).unwrap_or(i64::MAX))?;
+            }
+            store.set_rule_tags(id, &tags)?;
+            Ok(id)
+        })
+        .inspect(|_| {
+            // A rule saved at 3pm should not appear to do nothing until the
+            // next tick. Looking now is cheap and it is what someone who just
+            // pressed Save expects to see.
+            crate::scheduler::nudge(&app, shelv_core::scheduler::Sweep::Tick);
+        })
 }
 
 /// Replaces a rule's configuration, destinations and tags.
 #[tauri::command]
-fn update_rule(
+fn update_rule<R: Runtime>(
+    app: AppHandle<R>,
     state: State<'_, AppState>,
     id: RuleId,
     spec: RuleSpec,
     destinations: Vec<VolumePath>,
     tags: Vec<TagId>,
 ) -> Result<()> {
-    state.with_store(|store| {
-        refuse_if_unsafe(store, state.fs.as_ref(), &spec, &destinations)?;
-        store.update_rule(id, &spec)?;
+    state
+        .with_store(|store| {
+            refuse_if_unsafe(store, state.fs.as_ref(), &spec, &destinations)?;
+            store.update_rule(id, &spec)?;
 
-        // Replace the destination set. Existing rows are removed rather than
-        // reconciled, since a destination carries no state worth preserving
-        // — run history points at the rule, not at the destination row.
-        for existing in store.destinations(id)? {
-            store.delete_destination(existing.id)?;
-        }
-        for (order, destination) in destinations.iter().enumerate() {
-            store.add_destination(id, destination, i64::try_from(order).unwrap_or(i64::MAX))?;
-        }
-        store.set_rule_tags(id, &tags)
-    })
+            // Replace the destination set. Existing rows are removed rather than
+            // reconciled, since a destination carries no state worth preserving
+            // — run history points at the rule, not at the destination row.
+            for existing in store.destinations(id)? {
+                store.delete_destination(existing.id)?;
+            }
+            for (order, destination) in destinations.iter().enumerate() {
+                store.add_destination(id, destination, i64::try_from(order).unwrap_or(i64::MAX))?;
+            }
+            store.set_rule_tags(id, &tags)
+        })
+        .inspect(|()| {
+            crate::scheduler::nudge(&app, shelv_core::scheduler::Sweep::Tick);
+        })
 }
 
 /// Deletes a rule, along with its destinations, tag links and run history.

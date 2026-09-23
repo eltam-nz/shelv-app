@@ -6,6 +6,7 @@
 
 mod commands;
 mod runner;
+mod scheduler;
 mod watcher;
 
 use std::path::Path;
@@ -75,8 +76,9 @@ pub fn run() -> Result<(), StartupError> {
             // webview keeps its profile. See `open_main_window`.
             open_main_window(app, &data_dir)?;
 
-            // Started after the window so it has something to notify.
+            // Started after the window so they have something to notify.
             watcher::spawn(app.handle());
+            scheduler::spawn(app.handle());
             Ok(())
         })
         .invoke_handler(commands::handlers())

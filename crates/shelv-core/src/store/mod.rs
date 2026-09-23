@@ -609,6 +609,25 @@ impl Store {
         Ok(())
     }
 
+    /// When a rule last finished a run that did everything it planned.
+    ///
+    /// `Ok` only. A `Partial` run copied what it could, which is worth
+    /// recording but is not the rule having succeeded — and the scheduler
+    /// measures its period from success, so a rule that keeps hitting
+    /// unreadable files keeps asking rather than going quiet.
+    pub fn last_success(&self, rule: RuleId) -> Result<Option<i64>> {
+        self.conn
+            .query_row(
+                "SELECT finished_at FROM run
+                 WHERE rule_id = ?1 AND result = 'ok' AND finished_at IS NOT NULL
+                 ORDER BY finished_at DESC LIMIT 1",
+                [rule],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(store_err("could not read the last successful run"))
+    }
+
     /// A rule's runs, newest first.
     pub fn runs_for_rule(&self, rule: RuleId, limit: u32) -> Result<Vec<Run>> {
         let mut stmt = self
