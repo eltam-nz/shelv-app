@@ -629,6 +629,13 @@ impl LocalTime for WindowsLocalTime {
             }
         }
 
+        // Truncating on purpose: the difference is a whole number of
+        // seconds, because time zone offsets are whole minutes. There is
+        // nothing to round.
+        #[allow(
+            clippy::integer_division,
+            reason = "ticks to seconds, where the remainder is always zero"
+        )]
         let difference = from_filetime(local_time).saturating_sub(ticks) / TICKS_PER_SECOND;
         i32::try_from(difference).unwrap_or(0)
     }
