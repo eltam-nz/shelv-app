@@ -202,14 +202,16 @@ fn reveal_data_folder(state: State<'_, AppState>) -> Result<()> {
 /// This is what the rule table renders.
 #[tauri::command]
 fn list_rules(state: State<'_, AppState>) -> Result<Vec<RuleRow>> {
-    state.with_store(|store| rule_rows(store, state.fs.as_ref()))
+    let zone = shelv_core::platform::host_local_time();
+    state.with_store(|store| rule_rows(store, state.fs.as_ref(), zone.as_ref(), now()))
 }
 
 /// One rule, in the same shape as a table row.
 #[tauri::command]
 fn get_rule(state: State<'_, AppState>, id: RuleId) -> Result<RuleRow> {
+    let zone = shelv_core::platform::host_local_time();
     state.with_store(|store| {
-        rule_rows(store, state.fs.as_ref())?
+        rule_rows(store, state.fs.as_ref(), zone.as_ref(), now())?
             .into_iter()
             .find(|row| row.rule.id == id)
             .ok_or_else(|| CoreError::NotFound(format!("rule {id}")))

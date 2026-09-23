@@ -367,32 +367,37 @@ export function RuleEditor({
                 </Field>
 
                 <Field label="How often">
+                  {/* Custom (cron) schedules are in the data model and
+                      nothing evaluates them, so the option is not offered:
+                      a setting that silently never fires is worse than one
+                      that is absent. A rule saved with one before now still
+                      shows it, and says plainly that it will not run. */}
                   <Select
                     value={scheduleValue(spec.schedule)}
                     onChange={(v) => {
-                      update({
-                        schedule:
-                          v === "cron"
-                            ? { kind: "cron", value: "0 3 * * 1" }
-                            : ({ kind: v } as Schedule),
-                      });
+                      update({ schedule: { kind: v } as Schedule });
                     }}
                     options={[
                       ["manual", "Only when I ask"],
                       ["daily", "Daily"],
                       ["weekly", "Weekly"],
                       ["monthly", "Monthly"],
-                      ["cron", "Custom schedule"],
+                      ...(spec.schedule.kind === "cron"
+                        ? ([["cron", "Custom schedule (not supported)"]] as [
+                            string,
+                            string,
+                          ][])
+                        : []),
                     ]}
                   />
                   {spec.schedule.kind === "cron" && (
-                    <input
-                      value={spec.schedule.value}
-                      onChange={(e) => {
-                        update({ schedule: { kind: "cron", value: e.target.value } });
-                      }}
-                      className="mt-2 w-full rounded border border-border bg-bg px-2 py-1 font-mono text-xs"
-                    />
+                    <p
+                      className="mt-2 text-xs"
+                      style={{ color: "var(--result-partial)" }}
+                    >
+                      Shelv cannot run a custom schedule yet, so this rule only runs when
+                      you ask. Choose one of the others to have it run by itself.
+                    </p>
                   )}
                 </Field>
 

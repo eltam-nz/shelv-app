@@ -10,6 +10,7 @@
 import type {
   Availability,
   DestinationStatus,
+  Due,
   RuleRow,
   RunResult,
   StoredVolume,
@@ -79,6 +80,7 @@ interface RuleOptions {
   lastResult?: RunResult | null;
   lastRunAt?: number | null;
   enabled?: boolean;
+  due?: Due;
 }
 
 export function makeRule(options: RuleOptions): RuleRow {
@@ -110,6 +112,7 @@ export function makeRule(options: RuleOptions): RuleRow {
     })),
     destinations: options.destinations,
     source: status("System", options.sourceAvailability ?? "available"),
+    due: options.due ?? { kind: "now" },
     last_run:
       lastRunAt === null
         ? null

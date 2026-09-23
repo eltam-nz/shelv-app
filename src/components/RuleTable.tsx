@@ -14,7 +14,9 @@ import { tagStyle } from "../lib/palette";
 import { volumeName } from "../lib/volumes";
 import { DriveLocation } from "./DriveLocation";
 import type {
+  Date as DueDate,
   Layout,
+  NeverAutomatic,
   Packaging,
   PlaceholderPolicy,
   Retention,
@@ -35,6 +37,8 @@ declare module "@tanstack/react-table" {
     onBackUp: ((row: RuleRow) => void) | undefined;
     /** The rule being backed up right now, if any. */
     running: RuleId | null;
+    /** Whether automatic backups are held. */
+    paused: boolean;
   }
 }
 /**
@@ -331,10 +335,13 @@ const columns = [
   columnHelper.display({
     id: "next_run",
     header: "Next Backup",
-    size: 95,
-    // The scheduler lands in M3. Showing a guess here would be worse than
-    // showing nothing, since the whole point of the column is to be trusted.
-    cell: () => <span className="text-fg-muted">—</span>,
+    size: 110,
+    cell: (ctx) => (
+      <NextBackup
+        row={ctx.row.original}
+        paused={ctx.table.options.meta?.paused ?? false}
+      />
+    ),
   }),
 
   columnHelper.display({
@@ -364,6 +371,104 @@ const columns = [
  * Mirrors `RuleRow::is_runnable` in the core. A rule with two destinations,
  * one unplugged, can still back up to the other.
  */
+/**
+ * When this rule will next start by itself.
+ *
+ * The column showed an em dash from M0 until M3 precisely so that it could
+ * not lie, and the same standard applies now: every answer here is
+ * something Shelv will actually do.
+ *
+ * "Due now" is not a promise that it is running. A rule can be due and
+ * unreachable — the drive is in a drawer — and saying "when <drive> is
+ * connected" is the difference between something being wrong and something
+ * waiting for you.
+ */
+function NextBackup({ row, paused }: { row: RuleRow; paused: boolean }) {
+  const muted = "text-fg-muted";
+
+  if (row.due.kind === "never") {
+    const words: Record<NeverAutomatic, string> = {
+      disabled: "Disabled",
+      manual: "Manual only",
+      unsupported_schedule: "Custom schedule",
+    };
+    const why: Record<NeverAutomatic, string> = {
+      disabled: "This rule is switched off. Nothing runs it automatically.",
+      manual: "This rule runs only when you press Backup Now.",
+      unsupported_schedule:
+        "Shelv cannot run a custom schedule yet, so this rule only runs when you ask.",
+    };
+    return (
+      <span className={muted} title={why[row.due.reason]}>
+        {words[row.due.reason]}
+      </span>
+    );
+  }
+
+  if (paused) {
+    return (
+      <span
+        style={{ color: "var(--result-partial)" }}
+        title="Automatic backups are paused. Backup Now still works."
+      >
+        Paused
+      </span>
+    );
+  }
+
+  if (row.due.kind === "now") {
+    const blocked = firstBlockingDrive(row);
+    if (blocked !== null) {
+      return (
+        <span className={muted} title={`This rule is due. ${blocked} is not connected.`}>
+          When {blocked} is connected
+        </span>
+      );
+    }
+    return <span style={{ color: "var(--accent-blue)" }}>Due now</span>;
+  }
+
+  return <span title={`Due on ${isoDate(row.due.date)}`}>{whenText(row.due.date)}</span>;
+}
+
+/** The drive standing between a due rule and its backup, if one is. */
+function firstBlockingDrive(row: RuleRow): string | null {
+  if (row.source.availability !== "available") {
+    return volumeName(row.source);
+  }
+  const reachable = row.destinations.some((d) => d.status.availability === "available");
+  if (reachable) return null;
+  const first = row.destinations[0];
+  return first === undefined ? null : volumeName(first.status);
+}
+
+/** `2026-01-05`, for a title where the exact day matters. */
+function isoDate(date: DueDate): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${String(date.year)}-${pad(date.month)}-${pad(date.day)}`;
+}
+
+/**
+ * "Tomorrow" beats a date, and a date beats a weekday.
+ *
+ * Anything past the coming week is shown as a date: "Thursday" is only
+ * useful while there is one Thursday it could mean.
+ */
+function whenText(date: DueDate): string {
+  const today = new Date();
+  const due = new Date(date.year, date.month - 1, date.day);
+  const days = Math.round(
+    (due.getTime() -
+      new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime()) /
+      86_400_000,
+  );
+
+  if (days <= 0) return "Due now";
+  if (days === 1) return "Tomorrow";
+  if (days < 7) return due.toLocaleDateString(undefined, { weekday: "long" });
+  return due.toLocaleDateString(undefined, { day: "numeric", month: "short" });
+}
+
 /**
  * Backup Now, in the one state it is currently in.
  *
@@ -444,6 +549,7 @@ export function RuleTable({
   onEdit,
   onBackUp,
   running = null,
+  paused = false,
   onCreate,
 }: {
   rows: RuleRow[];
@@ -457,6 +563,8 @@ export function RuleTable({
   onBackUp?: (row: RuleRow) => void;
   /** The rule being backed up right now, if any. */
   running?: RuleId | null;
+  /** Whether automatic backups are held, which the column has to say. */
+  paused?: boolean;
   /** Start a new rule, offered from the empty state. */
   onCreate?: () => void;
 }) {
@@ -484,7 +592,7 @@ export function RuleTable({
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
     columnResizeMode: "onChange",
-    meta: { onEdit, onBackUp, running },
+    meta: { onEdit, onBackUp, running, paused },
   });
 
   if (rows.length === 0) {

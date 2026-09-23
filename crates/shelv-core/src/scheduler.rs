@@ -160,7 +160,7 @@ pub fn sweep(
 ) -> Result<Vec<Ready>> {
     let mut ready = Vec::new();
 
-    for row in rule_rows(store, fs)? {
+    for row in rule_rows(store, fs, zone, now)? {
         if !row.is_runnable() {
             continue;
         }

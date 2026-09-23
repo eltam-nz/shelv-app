@@ -21,9 +21,13 @@ use shelv_core::model::{
     Layout, Packaging, PlaceholderPolicy, Retention, RuleSpec, Schedule, VolumePath,
 };
 use shelv_core::platform::{
-    CaseSensitivity, DriveType, PlatformFs, SpaceInfo, VolumeIdentity, VolumeIdentityKind,
-    VolumeInfo,
+    CaseSensitivity, DriveType, FixedOffset, PlatformFs, SpaceInfo, VolumeIdentity,
+    VolumeIdentityKind, VolumeInfo,
 };
+
+/// A fixed instant for the rows these tests read. Nothing here turns on the
+/// date; the scheduler's own tests cover that.
+const NOW: i64 = 1_758_526_452;
 use shelv_core::safety::{check_rule, RuleProblem};
 use shelv_core::store::Store;
 use shelv_core::view::{drive_rows, refresh_stored_volumes, rule_rows, Availability};
@@ -120,7 +124,9 @@ fn a_rule_can_be_created_edited_and_deleted_through_the_core() {
     // Nothing exists until a folder is picked. This is the state a fresh
     // install is in, and the reason the picker is the entry point.
     assert!(store.volumes().unwrap().is_empty());
-    assert!(rule_rows(&store, &fs).unwrap().is_empty());
+    assert!(rule_rows(&store, &fs, &FixedOffset(0), NOW)
+        .unwrap()
+        .is_empty());
 
     // Pick a source and a destination. Each registers its volume.
     let source =
@@ -155,7 +161,7 @@ fn a_rule_can_be_created_edited_and_deleted_through_the_core() {
     store.set_rule_tags(rule, &[tag]).unwrap();
 
     // It renders as one row, with both volumes attached.
-    let rows = rule_rows(&store, &fs).unwrap();
+    let rows = rule_rows(&store, &fs, &FixedOffset(0), NOW).unwrap();
     assert_eq!(rows.len(), 1);
     let row = rows.first().unwrap();
     assert_eq!(row.rule.spec.name, "Lightroom Catalog");
@@ -176,7 +182,11 @@ fn a_rule_can_be_created_edited_and_deleted_through_the_core() {
     changed.retention = Retention::KeepLastN(6);
     store.update_rule(rule, &changed).unwrap();
 
-    let row = rule_rows(&store, &fs).unwrap().into_iter().next().unwrap();
+    let row = rule_rows(&store, &fs, &FixedOffset(0), NOW)
+        .unwrap()
+        .into_iter()
+        .next()
+        .unwrap();
     assert_eq!(row.rule.spec.name, "Lightroom Catalog (weekly)");
     assert_eq!(row.rule.spec.layout, Layout::Snapshot);
     assert_eq!(row.tags.len(), 1, "editing must not drop the tags");
@@ -184,7 +194,9 @@ fn a_rule_can_be_created_edited_and_deleted_through_the_core() {
 
     // Delete it. The volumes and the tag outlive it.
     store.delete_rule(rule).unwrap();
-    assert!(rule_rows(&store, &fs).unwrap().is_empty());
+    assert!(rule_rows(&store, &fs, &FixedOffset(0), NOW)
+        .unwrap()
+        .is_empty());
     assert_eq!(store.volumes().unwrap().len(), 2);
     assert_eq!(store.tags().unwrap().len(), 1);
 }
@@ -209,7 +221,7 @@ fn unplugging_the_destination_drive_makes_the_rule_unrunnable_but_keeps_it() {
         volumes: vec![volume("/", "System", DriveType::Fixed)],
     };
 
-    let row = rule_rows(&store, &unplugged)
+    let row = rule_rows(&store, &unplugged, &FixedOffset(0), NOW)
         .unwrap()
         .into_iter()
         .next()
@@ -244,7 +256,7 @@ fn a_different_drive_in_the_same_slot_is_reported_as_a_mismatch() {
         volumes: vec![volume("/", "System", DriveType::Fixed), impostor],
     };
 
-    let row = rule_rows(&store, &swapped)
+    let row = rule_rows(&store, &swapped, &FixedOffset(0), NOW)
         .unwrap()
         .into_iter()
         .next()
@@ -344,7 +356,7 @@ fn renaming_a_drive_updates_the_stored_name_without_enrolling_new_drives() {
     assert_eq!(refresh_stored_volumes(&store, &after, 3000).unwrap(), 0);
 
     // And the table shows the new name.
-    let row = rule_rows(&store, &after)
+    let row = rule_rows(&store, &after, &FixedOffset(0), NOW)
         .unwrap()
         .into_iter()
         .next()
@@ -518,7 +530,7 @@ fn a_drive_that_comes_back_on_a_different_letter_stays_the_same_drive() {
     );
 
     // ...the rule can still run...
-    let rule_row = rule_rows(&store, &relocated)
+    let rule_row = rule_rows(&store, &relocated, &FixedOffset(0), NOW)
         .unwrap()
         .into_iter()
         .next()

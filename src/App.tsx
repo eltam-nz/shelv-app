@@ -393,6 +393,7 @@ export function App() {
                 }}
                 onBackUp={(row) => void backUp(row)}
                 running={running}
+                paused={paused}
                 onCreate={() => {
                   setPanel({ kind: "new-rule" });
                 }}

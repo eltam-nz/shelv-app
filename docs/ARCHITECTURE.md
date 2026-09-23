@@ -622,6 +622,19 @@ contrast check has never seen, and a disabled Backup Now stays inert: a row
 whose rule cannot run must not light up under the pointer as though it
 could.
 
+**Next Backup answers the question it is named for.** It showed an em dash
+from M0 until M3 precisely so it could not lie, and the same standard
+applies now: "Due now", "Tomorrow", a weekday while there is only one it
+could mean, a date beyond that, "Manual only", "Disabled", "Paused". The
+answer is computed in Rust, because it is calendar arithmetic in the
+machine's own time zone and a second implementation in TypeScript could
+disagree about what day it is.
+
+The one case worth the extra words is a rule that is due and cannot reach
+its drives: it says **"When Archive 4TB is connected"** rather than "Due
+now". A rule that is due but motionless reads as something being wrong;
+naming the drive turns it into something waiting for you.
+
 Deleting a rule lives in the editor's footer, at the opposite end from Save,
 and opens a confirmation. Not in the table: a row already carries an action
 per rule, and a third would put a destructive button beside Backup Now on
