@@ -125,6 +125,9 @@ pub struct RunSummary {
     pub stats: RunStats,
     /// Why it did not start, in words fit to show someone.
     pub skipped: Option<String>,
+    /// What went wrong, or why the run stopped itself. The same words the
+    /// history carries, so a notification and the run list agree.
+    pub note: Option<String>,
 }
 
 /// What the window is told while a run is going.
@@ -254,6 +257,7 @@ fn run_destination(
         result: None,
         stats: RunStats::default(),
         skipped: Some(reason.to_owned()),
+        note: None,
     };
 
     let recorded = store.volume(destination.path.volume)?;
@@ -322,6 +326,7 @@ fn run_destination(
                 result: Some(outcome.result),
                 stats,
                 skipped: None,
+                note,
             })
         }
         Err(e) => {
@@ -343,6 +348,7 @@ fn run_destination(
                 result: Some(RunResult::Failed),
                 stats: RunStats::default(),
                 skipped: None,
+                note: Some(message),
             })
         }
     }

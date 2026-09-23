@@ -63,6 +63,15 @@ pub fn nudge<R: Runtime>(app: &AppHandle<R>, reason: Sweep) {
 /// One sweep, queueing whatever it finds.
 fn look<R: Runtime>(app: &AppHandle<R>, reason: Sweep) {
     let state = app.state::<AppState>();
+
+    // Paused stops runs from starting, and stops them being queued to start
+    // the moment it is lifted: somebody who paused for the afternoon does
+    // not want four hours of backups at five o'clock.
+    if state.paused() {
+        tracing::debug!("skipping a sweep: backups are paused");
+        return;
+    }
+
     let zone = platform::host_local_time();
 
     let ready = match state.sweep(zone.as_ref(), now(), reason) {

@@ -13,6 +13,8 @@ vi.mock("../lib/ipc", () => ({
     }),
   ),
   revealDataFolder: vi.fn(() => Promise.resolve()),
+  runsAtLogin: vi.fn(() => Promise.resolve(false)),
+  setRunAtLogin: vi.fn(() => Promise.resolve()),
   ShelvError: class extends Error {},
 }));
 
@@ -87,5 +89,30 @@ describe("AboutPanel", () => {
 
     await user.click(await screen.findByRole("button", { name: "Close" }));
     expect(closed).toHaveBeenCalledOnce();
+  });
+
+  it("offers to start with the machine, and does not assume it", async () => {
+    // A backup tool that adds itself to startup without asking has made a
+    // decision that is not its to make.
+    const user = userEvent.setup();
+    render(<AboutPanel onClose={noop} />);
+
+    const toggle = await screen.findByRole("checkbox", {
+      name: /Start Shelv when I sign in/,
+    });
+    expect(toggle).not.toBeChecked();
+
+    await user.click(toggle);
+    const { setRunAtLogin } = await import("../lib/ipc");
+    expect(setRunAtLogin).toHaveBeenCalledWith(true);
+  });
+
+  it("says what closing the window will do", async () => {
+    // The surprise otherwise: closing it hides it, and a backup tool that
+    // looks closed but is not has to say so somewhere.
+    render(<AboutPanel onClose={noop} />);
+    expect(
+      await screen.findByText(/Closing the window hides it rather than quitting/),
+    ).toBeInTheDocument();
   });
 });

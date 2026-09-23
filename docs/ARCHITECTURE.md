@@ -422,6 +422,38 @@ the recovery path for the mistake automation makes more likely, and an
 automatic sweep of them would be the same mistake a month later. Clearing
 them is manual.
 
+### The tray, and the pause switch
+
+Shelv runs as a **per-user tray process, never a Windows service**. That is a
+correctness requirement before a convenience one: a service context receives
+`STATUS_CLOUD_FILE_ACCESS_DENIED` instead of `OneDrive` hydration
+(`docs/PLAN.md` §2), so the background half of a tool that backs up cloud
+folders cannot be a service at all.
+
+Closing the window therefore **hides** it. A backup tool that stops backing
+up because somebody closed a window is not automated, and Quit lives in the
+tray menu — which is also where it says it is still running. A machine with
+no tray still works: failing to build one is logged, not fatal, and the
+window is all that is lost.
+
+**Pause holds every automatic backup**, from the tray or the header, and the
+status bar says so — a backup tool that is not backing up has to admit it
+somewhere always visible. It stops runs from *starting*; a run already going
+is left to finish, since nothing is left half-written either way and the next
+run would only repeat the work. Cancel is there for the stronger thing. It
+is deliberately **not persisted**: a pause is a decision about this
+afternoon, and coming back from a restart still silently paused is the worst
+kind of quiet.
+
+**Run at login is off until asked for**, in the About panel. The frontend
+asks through a command taking a boolean, so `tauri-plugin-autostart`'s own
+commands stay out of `capabilities/` and the id-only IPC surface is
+unchanged.
+
+**Notifications only when something needs a person**: failed, refused, or
+partial. One after every successful backup is one nobody reads, and the
+value of the refusal notice is that it interrupts.
+
 ## Volume identity
 
 The single most important decision in the data model, because getting it wrong

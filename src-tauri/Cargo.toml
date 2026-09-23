@@ -22,7 +22,8 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 shelv-core = { workspace = true }
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
+tauri-plugin-autostart = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-notification = "2"
 serde = { workspace = true }
@@ -40,9 +41,13 @@ tauri = { version = "2", features = ["test"] }
 # in the graph via tauri-plugin-dialog, so this adds no new dependency.
 tauri-plugin-fs = "2"
 
-# The updater, autostart and single-instance plugins are desktop-only and are
-# added in M3/M5 when the features that need them land. Keeping them out until
-# then keeps the capability surface in `capabilities/` honest.
+# The updater and single-instance plugins are desktop-only and are added in
+# M5 when the features that need them land. Keeping them out until then keeps
+# the capability surface in `capabilities/` honest.
+#
+# Autostart arrived in M3.5. It is driven entirely from Rust — the frontend
+# asks through a command that takes a boolean, never through the plugin — so
+# it adds no entry to `capabilities/`.
 
 [lints]
 workspace = true

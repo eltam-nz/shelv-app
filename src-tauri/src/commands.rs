@@ -42,6 +42,8 @@ pub struct AppState {
     db_path: PathBuf,
     /// The backup currently running, if any.
     pub runner: crate::runner::Runner,
+    /// Whether automatic backups are held.
+    paused: std::sync::atomic::AtomicBool,
 }
 
 impl AppState {
@@ -53,7 +55,24 @@ impl AppState {
             fs,
             db_path,
             runner: crate::runner::Runner::default(),
+            paused: std::sync::atomic::AtomicBool::new(false),
         }
+    }
+
+    /// Whether automatic backups are held.
+    ///
+    /// Deliberately not persisted. A pause is a decision about this
+    /// afternoon — somebody about to travel, or about to work off the same
+    /// drive — and a backup tool that came back from a restart still
+    /// silently paused would be the worst kind of quiet.
+    pub fn paused(&self) -> bool {
+        self.paused.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Holds or resumes automatic backups.
+    pub fn set_paused(&self, paused: bool) {
+        self.paused
+            .store(paused, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Asks the scheduler which rules should start now.
@@ -451,6 +470,38 @@ fn running_rule(state: State<'_, AppState>) -> Option<RuleId> {
     state.runner.running()
 }
 
+/// Holds or resumes automatic backups.
+///
+/// Stops runs from starting; a run already going is left to finish, since
+/// nothing is left half-written either way and the next run would only have
+/// to do it again. Cancel is there for the stronger thing.
+#[tauri::command]
+fn set_paused<R: Runtime>(app: AppHandle<R>, paused: bool) {
+    crate::tray::set_paused(&app, paused);
+}
+
+/// Whether automatic backups are held.
+#[tauri::command]
+fn is_paused(state: State<'_, AppState>) -> bool {
+    state.paused()
+}
+
+/// Turns running at login on or off.
+///
+/// Takes a boolean, not a path or a command line: the frontend asks for the
+/// setting and Rust decides what that means, so the autostart plugin's own
+/// commands stay out of `capabilities/`.
+#[tauri::command]
+fn set_run_at_login<R: Runtime>(app: AppHandle<R>, enabled: bool) -> Result<()> {
+    crate::tray::set_run_at_login(&app, enabled)
+}
+
+/// Whether Shelv is set to run at login.
+#[tauri::command]
+fn runs_at_login<R: Runtime>(app: AppHandle<R>) -> bool {
+    crate::tray::runs_at_login(&app)
+}
+
 /// A rule's raw configuration, for the editor.
 #[tauri::command]
 fn get_rule_spec(state: State<'_, AppState>, id: RuleId) -> Result<Rule> {
@@ -550,5 +601,9 @@ pub fn handlers<R: Runtime>() -> impl Fn(Invoke<R>) -> bool + Send + Sync + 'sta
         run_rule,
         cancel_run,
         running_rule,
+        set_paused,
+        is_paused,
+        set_run_at_login,
+        runs_at_login,
     ]
 }

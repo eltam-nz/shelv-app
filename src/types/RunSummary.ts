@@ -28,4 +28,9 @@ stats: RunStats,
 /**
  * Why it did not start, in words fit to show someone.
  */
-skipped: string | null, };
+skipped: string | null, 
+/**
+ * What went wrong, or why the run stopped itself. The same words the
+ * history carries, so a notification and the run list agree.
+ */
+note: string | null, };

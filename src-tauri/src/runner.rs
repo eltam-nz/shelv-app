@@ -199,6 +199,8 @@ fn spawn_run<R: Runtime>(
                     error: Some(e.to_string()),
                 },
             };
+            notify(&handle, &finished);
+
             if let Err(e) = handle.emit(RUN_FINISHED, &finished) {
                 tracing::warn!(error = %e, "could not tell the window the run finished");
             }
@@ -329,6 +331,62 @@ impl<R: Runtime> CopyObserver for Reporter<R> {
 
     fn cancelled(&self) -> bool {
         self.cancel.load(Ordering::Relaxed)
+    }
+}
+
+/// Tells the user about a run that did not simply work.
+///
+/// **Only when something needs them.** A notification after every
+/// successful backup is a notification nobody reads, and the whole value of
+/// the refusal notice is that it interrupts. Success is in the window, in
+/// the row, where somebody who wants to check can look.
+fn notify<R: Runtime>(app: &AppHandle<R>, finished: &RunFinished) {
+    use shelv_core::model::RunResult;
+    use tauri_plugin_notification::NotificationExt;
+
+    let (title, body) = if let Some(error) = &finished.error {
+        ("Backup could not run", error.clone())
+    } else {
+        let worst = finished
+            .summaries
+            .iter()
+            .filter_map(|summary| summary.result)
+            .min_by_key(|result| match result {
+                // Worst first, so one destination going wrong is what the
+                // notification is about even if another went fine.
+                RunResult::Refused => 0,
+                RunResult::Failed => 1,
+                RunResult::Partial => 2,
+                RunResult::Cancelled => 3,
+                RunResult::Ok => 4,
+            });
+
+        match worst {
+            Some(RunResult::Refused) => (
+                "Backup stopped itself",
+                finished
+                    .summaries
+                    .iter()
+                    .find_map(|summary| summary.note.clone())
+                    .unwrap_or_else(|| {
+                        "The backup would have removed most of the destination.".to_owned()
+                    }),
+            ),
+            Some(RunResult::Failed) => (
+                "Backup failed",
+                "Shelv could not complete this backup. Open Shelv to see why.".to_owned(),
+            ),
+            Some(RunResult::Partial) => (
+                "Backup finished with problems",
+                "Some files could not be read or written. Open Shelv to see which.".to_owned(),
+            ),
+            // Cancelled is the user's own doing, and Ok needs no telling.
+            _ => return,
+        }
+    };
+
+    if let Err(e) = app.notification().builder().title(title).body(body).show() {
+        tracing::warn!(error = %e, "could not show a notification");
     }
 }
 
