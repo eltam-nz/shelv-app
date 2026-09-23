@@ -42,10 +42,15 @@ const MIGRATIONS: &[Migration] = &[
         name: "period schedules",
         sql: include_str!("../../migrations/0004_period_schedules.sql"),
     },
+    Migration {
+        version: 5,
+        name: "refused runs",
+        sql: include_str!("../../migrations/0005_refused_runs.sql"),
+    },
 ];
 
 /// The schema version this build expects.
-pub const LATEST_VERSION: i64 = 4;
+pub const LATEST_VERSION: i64 = 5;
 
 /// Applies any migrations the database has not yet seen.
 ///
@@ -196,6 +201,59 @@ mod tests {
                 .is_err(),
             "the column should be gone"
         );
+    }
+
+    #[test]
+    fn a_v4_database_keeps_its_run_history_through_the_table_rebuild() {
+        // SQLite cannot alter a CHECK, so 0005 copies the table. That is the
+        // one migration so far that could lose data rather than a column,
+        // and run history is the record someone consults after a drive
+        // fails — so it is checked rather than assumed, indexes included.
+        let mut conn = Connection::open_in_memory().unwrap();
+        apply_up_to(&mut conn, 4);
+        conn.execute_batch(
+            "INSERT INTO volume (identity_kind, identity, drive_type)
+             VALUES ('linux_fs_uuid', 'uuid-1', 'removable');
+             INSERT INTO rule (name, source_volume, source_rel, layout, packaging,
+                               schedule, created_at)
+             VALUES ('Photos', 1, 'Pictures', 'mirror', 'files', 'daily', 1000);
+             INSERT INTO destination (rule_id, volume_id, dest_rel, sort_order)
+             VALUES (1, 1, 'Backups', 0);
+             INSERT INTO run (rule_id, destination_id, \"trigger\", started_at,
+                              finished_at, result, files_copied, bytes_copied)
+             VALUES (1, 1, 'manual', 2000, 2100, 'partial', 7, 4096);",
+        )
+        .unwrap();
+
+        assert_eq!(migrate(&mut conn).unwrap(), LATEST_VERSION);
+
+        let (result, copied, bytes): (String, i64, i64) = conn
+            .query_row(
+                "SELECT result, files_copied, bytes_copied FROM run",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!((result.as_str(), copied, bytes), ("partial", 7, 4096));
+
+        // The new spelling is now accepted, which is the point of the rebuild.
+        conn.execute(
+            "INSERT INTO run (rule_id, destination_id, \"trigger\", started_at, result)
+             VALUES (1, 1, 'schedule', 3000, 'refused')",
+            [],
+        )
+        .unwrap();
+
+        // And the indexes came back with it.
+        let indexes: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM sqlite_master
+                 WHERE type = 'index' AND tbl_name = 'run' AND name LIKE 'idx_run%'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(indexes, 2, "both indexes must survive the rebuild");
     }
 
     /// Brings a connection to a given schema version, as a shipped build of

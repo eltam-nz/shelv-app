@@ -118,6 +118,15 @@ pub struct Plan {
     /// Total bytes across [`Self::copies`].
     #[ts(type = "number")]
     pub bytes: u64,
+    /// How many files were already at the destination when the plan was
+    /// made. Zero for a snapshot, which compares against nothing.
+    ///
+    /// Carried so that a deletion can be weighed against what is there: ten
+    /// files going from a backup of twelve is a different event from ten
+    /// going from a backup of ten thousand, and only the first is worth
+    /// stopping an unattended run over.
+    #[ts(type = "number")]
+    pub destination_files: u64,
 }
 
 impl Plan {
@@ -184,6 +193,8 @@ pub fn plan(
         Some(root) if options.layout == Layout::Mirror => index_destination(fs, root, options),
         _ => BTreeMap::new(),
     };
+
+    plan.destination_files = u64::try_from(existing.len()).unwrap_or(u64::MAX);
 
     walk_source(fs, source, options, &excludes, &mut existing, &mut plan)?;
 

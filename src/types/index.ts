@@ -11,6 +11,7 @@ export type { CopyReport } from "./CopyReport";
 export type { CoreError } from "./CoreError";
 export type { DataLocations } from "./DataLocations";
 export type { Date } from "./Date";
+export type { DeletionRefusal } from "./DeletionRefusal";
 export type { Destination } from "./Destination";
 export type { DestinationId } from "./DestinationId";
 export type { DestinationPlan } from "./DestinationPlan";

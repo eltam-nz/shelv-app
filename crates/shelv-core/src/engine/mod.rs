@@ -277,16 +277,28 @@ fn run_destination(
     let started_at = clock();
     let id = store.begin_run(destination.rule, destination.id, trigger, started_at)?;
 
-    match run::execute(fs, source, &root, &options, started_at, observer) {
+    // Manual is the only trigger with somebody at the screen, and the only
+    // one that has already shown its deletions.
+    let watched = if trigger == RunTrigger::Manual {
+        run::Watched::ByHand
+    } else {
+        run::Watched::ByNobody
+    };
+
+    match run::execute(fs, source, &root, &options, started_at, watched, observer) {
         Ok(outcome) => {
             let stats = stats_of(&outcome);
             let snapshot = (spec.layout == Layout::Snapshot).then(|| outcome.target.clone());
+            // A refusal carries its reason into the history, where the point
+            // of it is: somebody reading the run list later has to be able
+            // to see what Shelv saw and why it stopped.
+            let note = outcome.refusal.map(|refusal| refusal.to_string());
             store.finish_run(
                 id,
                 outcome.result,
                 &stats,
                 clock(),
-                None,
+                note.as_deref(),
                 snapshot.as_deref(),
             )?;
             Ok(RunSummary {
@@ -733,5 +745,40 @@ mod tests {
         let last = store.last_run(rule).unwrap().unwrap();
         assert_eq!(last.started_at, NOW);
         assert_eq!(last.finished_at, Some(NOW + 5));
+    }
+
+    #[test]
+    fn a_scheduled_run_that_would_empty_the_backup_is_recorded_as_refused() {
+        // Through the store, because the history is what someone reads the
+        // next morning: the result has to be distinguishable from a failure
+        // and it has to say what Shelv saw.
+        let src = tempfile::tempdir().unwrap();
+        let dst = tempfile::tempdir().unwrap();
+        for n in 0..20 {
+            fs::write(dst.path().join(format!("photo-{n}.raw")), b"irreplaceable").unwrap();
+        }
+
+        let (store, platform, rule) = fixture(src.path(), dst.path(), Layout::Mirror);
+        let summaries = run_rule(
+            &store,
+            &platform,
+            rule,
+            RunTrigger::Schedule,
+            &|| NOW,
+            &Silent,
+        )
+        .unwrap();
+
+        assert_eq!(summaries[0].result, Some(RunResult::Refused));
+
+        let last = store.last_run(rule).unwrap().unwrap();
+        assert_eq!(last.result, Some(RunResult::Refused));
+        assert!(
+            last.error
+                .unwrap_or_default()
+                .contains("20 of the 20 files"),
+            "the history has to say what it saw"
+        );
+        assert_eq!(fs::read_dir(dst.path()).unwrap().count(), 20);
     }
 }

@@ -328,6 +328,34 @@ and nothing evaluates it: treating it as daily would run a backup on a
 schedule nobody chose, and treating it as manual would hide that the
 setting does nothing.
 
+### Refusing a run nobody is watching
+
+M1 only ever deleted with somebody reading a preview. The scheduler removes
+that person, and a mirror faithfully reproduces a source that has gone
+missing by emptying the backup of it — a drive that mounted empty, a folder
+renamed, a sync client that has not finished. `safety::deletion_refusal`
+stands in for the reader who is not there.
+
+An unattended run whose plan would remove **more than a quarter** of what is
+at the destination, **and more than eight files**, stops. Both halves are
+needed: a share alone refuses a two-file folder losing one, which is
+ordinary; a count alone never triggers on a large backup, where losing a
+quarter is exactly the disaster. Neither number is principled — a routine
+day's deletions are a handful out of thousands, and the event this catches
+takes nearly all of them, so a quarter sits far above one and far below the
+other.
+
+It stops **before anything is written**, copies included: a run that has
+decided the source looks wrong must not half-apply itself, since the copies
+come from the same reading of it. The outcome is `RunResult::Refused`, added
+in migration 0005 — not `Failed`, because nothing is broken and a refusal in
+the column someone checks for dying drives would be read as one. The reason
+goes into the run's error text, which is what the history shows.
+
+**Backup Now is never refused.** The preview is the guard there, and someone
+who has read it and pressed the button has already made this decision with
+the numbers on screen.
+
 ## Volume identity
 
 The single most important decision in the data model, because getting it wrong

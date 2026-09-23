@@ -230,6 +230,11 @@ sql_enum! {
         Failed => "failed",
         /// The user cancelled, or the volume went away.
         Cancelled => "cancelled",
+        /// Stopped before writing anything, because what it was about to do
+        /// did not look like what the rule meant. Distinct from `Failed`:
+        /// nothing is broken, and a refusal in the column someone checks for
+        /// dying drives would be read as one.
+        Refused => "refused",
     }
 }
 

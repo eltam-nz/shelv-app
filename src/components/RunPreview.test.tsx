@@ -44,6 +44,7 @@ function plans(deletions: string[]): DestinationPlan[] {
           directories: [],
           skipped: [],
           bytes: 2048,
+          destination_files: 40,
         },
       },
     },
