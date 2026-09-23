@@ -19,7 +19,6 @@ function row(): RuleRow {
         retention: { kind: "unlimited" },
         schedule: { kind: "manual" },
         run_on_connect: false,
-        catch_up: false,
         placeholders: "hydrate",
         hydrate_budget_bytes: null,
         follow_symlinks: false,

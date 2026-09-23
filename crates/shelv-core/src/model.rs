@@ -208,7 +208,10 @@ sql_enum! {
         Manual => "manual",
         /// The rule's schedule came due.
         Schedule => "schedule",
-        /// A scheduled run had been missed and was made up.
+        /// The rule was overdue by more than one period when Shelv noticed
+        /// — the machine was off, or the drive absent, across a boundary.
+        /// The run itself is no different; the distinction is there so the
+        /// history can say why a backup happened on a Tuesday afternoon.
         CatchUp => "catch_up",
         /// A volume the rule depends on was attached.
         OnConnect => "on_connect",
@@ -428,8 +431,6 @@ pub struct RuleSpec {
     pub schedule: Schedule,
     /// Run when a destination volume is attached.
     pub run_on_connect: bool,
-    /// Make up runs missed while the machine was off or the drive absent.
-    pub catch_up: bool,
     /// What to do about cloud placeholders.
     pub placeholders: PlaceholderPolicy,
     /// Cap on bytes hydrated in one run. `None` means no cap.

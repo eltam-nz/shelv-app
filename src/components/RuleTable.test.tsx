@@ -80,7 +80,7 @@ describe("RuleTable", () => {
   it("shows the remaining rule settings in the detailed view", () => {
     render(<RuleTable rows={sampleRows()} view="detailed" />);
 
-    for (const header of ["Cloud", "On connect", "Catch up", "Keep", "Links", "Ignore"]) {
+    for (const header of ["Cloud", "On connect", "Keep", "Links", "Ignore"]) {
       expect(
         screen.getByRole("columnheader", { name: new RegExp(header, "i") }),
         `missing column: ${header}`,

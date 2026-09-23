@@ -63,7 +63,6 @@ const CONFIGURATION_COLUMNS = ["layout", "packaging", "schedule"];
 const DETAIL_COLUMNS = [
   "placeholders",
   "run_on_connect",
-  "catch_up",
   "retention",
   "follow_symlinks",
   "excludes",
@@ -281,13 +280,6 @@ const columns = [
     id: "run_on_connect",
     header: "On connect",
     size: 90,
-    cell: (ctx) => yesNo(ctx.getValue()),
-  }),
-
-  columnHelper.accessor((row) => row.rule.spec.catch_up, {
-    id: "catch_up",
-    header: "Catch up",
-    size: 80,
     cell: (ctx) => yesNo(ctx.getValue()),
   }),
 

@@ -105,7 +105,6 @@ fn spec(name: &str, source: VolumePath) -> RuleSpec {
         retention: Retention::Unlimited,
         schedule: Schedule::Weekly,
         run_on_connect: true,
-        catch_up: true,
         placeholders: PlaceholderPolicy::Hydrate,
         hydrate_budget_bytes: None,
         follow_symlinks: false,

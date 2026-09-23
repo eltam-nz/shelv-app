@@ -388,9 +388,9 @@ impl Store {
             .execute(
                 "INSERT INTO rule (name, enabled, source_volume, source_rel, layout, packaging,
                                    retention_kind, retention_value, schedule,
-                                   run_on_connect, catch_up, placeholders, hydrate_budget_bytes,
+                                   run_on_connect, placeholders, hydrate_budget_bytes,
                                    follow_symlinks, excludes, created_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
                 rusqlite::params![
                     spec.name,
                     i64::from(spec.enabled),
@@ -402,7 +402,6 @@ impl Store {
                     retention_value,
                     spec.schedule.to_db_string(),
                     i64::from(spec.run_on_connect),
-                    i64::from(spec.catch_up),
                     spec.placeholders,
                     spec.hydrate_budget_bytes.map(as_i64),
                     i64::from(spec.follow_symlinks),
@@ -426,8 +425,8 @@ impl Store {
                 "UPDATE rule SET name = ?2, enabled = ?3, source_volume = ?4, source_rel = ?5,
                                  layout = ?6, packaging = ?7,
                                  retention_kind = ?8, retention_value = ?9, schedule = ?10,
-                                 run_on_connect = ?11, catch_up = ?12, placeholders = ?13,
-                                 hydrate_budget_bytes = ?14, follow_symlinks = ?15, excludes = ?16
+                                 run_on_connect = ?11, placeholders = ?12,
+                                 hydrate_budget_bytes = ?13, follow_symlinks = ?14, excludes = ?15
                  WHERE id = ?1",
                 rusqlite::params![
                     id,
@@ -441,7 +440,6 @@ impl Store {
                     retention_value,
                     spec.schedule.to_db_string(),
                     i64::from(spec.run_on_connect),
-                    i64::from(spec.catch_up),
                     spec.placeholders,
                     spec.hydrate_budget_bytes.map(as_i64),
                     i64::from(spec.follow_symlinks),
@@ -683,7 +681,7 @@ impl Store {
 
 const RULE_SELECT: &str = "SELECT id, name, enabled, source_volume, source_rel, layout, packaging,
             retention_kind, retention_value, schedule, run_on_connect,
-            catch_up, placeholders, hydrate_budget_bytes, follow_symlinks, excludes, created_at
+            placeholders, hydrate_budget_bytes, follow_symlinks, excludes, created_at
      FROM rule";
 
 const RUN_SELECT: &str = "SELECT id, rule_id, destination_id, \"trigger\", started_at, finished_at,
@@ -781,7 +779,7 @@ fn read_volume(row: &Row<'_>) -> rusqlite::Result<StoredVolume> {
 /// inner [`Result`] covers values `SQLite` accepted but the domain cannot.
 fn read_rule(row: &Row<'_>) -> rusqlite::Result<Result<Rule>> {
     let schedule_text: String = row.get(9)?;
-    let excludes_text: String = row.get(15)?;
+    let excludes_text: String = row.get(14)?;
     let retention_kind: Option<String> = row.get(7)?;
     let retention_value: Option<u32> = row.get(8)?;
 
@@ -801,7 +799,7 @@ fn read_rule(row: &Row<'_>) -> rusqlite::Result<Result<Rule>> {
 
     Ok(Ok(Rule {
         id: row.get(0)?,
-        created_at: row.get(16)?,
+        created_at: row.get(15)?,
         spec: RuleSpec {
             name: row.get(1)?,
             enabled: row.get::<_, i64>(2)? != 0,
@@ -814,10 +812,9 @@ fn read_rule(row: &Row<'_>) -> rusqlite::Result<Result<Rule>> {
             retention: Retention::from_columns(retention_kind.as_deref(), retention_value),
             schedule,
             run_on_connect: row.get::<_, i64>(10)? != 0,
-            catch_up: row.get::<_, i64>(11)? != 0,
-            placeholders: row.get::<_, PlaceholderPolicy>(12)?,
-            hydrate_budget_bytes: row.get::<_, Option<i64>>(13)?.map(as_u64),
-            follow_symlinks: row.get::<_, i64>(14)? != 0,
+            placeholders: row.get::<_, PlaceholderPolicy>(11)?,
+            hydrate_budget_bytes: row.get::<_, Option<i64>>(12)?.map(as_u64),
+            follow_symlinks: row.get::<_, i64>(13)? != 0,
             excludes,
         },
     }))

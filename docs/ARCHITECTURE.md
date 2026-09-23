@@ -48,8 +48,9 @@ a concrete implementation. `scripts/check-platform-boundary.sh` fails CI if the
 | `view/` | Aggregates for the UI: a rule plus its tags, destinations, availability and last result. |
 | `engine/` | Plan, execute, prune. `engine::planner` decides and writes nothing; `engine::copier` writes. Deletion, snapshots and pruning are **M1.3–M1.4, M3**. |
 | `cloud/` | OneDrive hydration, budgets, pin-state restore. **M4.** |
-| `scheduler/` | Cron evaluation, catch-up, run-on-connect, the run queue. **M3.** |
-| `safety/` | Path canonicalisation and the destructive-operation guards. **M1.** |
+| `scheduler/` | Whether a rule is due. The queue and run-on-connect are **M3.2**. |
+| `safety/` | Path canonicalisation and the destructive-operation guards. |
+| `civil/` | Calendar arithmetic: instants to dates, and the periods a schedule counts in. |
 | `volumes/` | Volume tracking and identity verification. **M1.** |
 | `watch/` | Notices that the set of attached drives has changed, and reports it only when it really has. |
 
@@ -290,6 +291,42 @@ stop it.
   on its own. A drive that was unplugged is recorded as skipped, not as a
   failure — that is the ordinary case for a removable drive, and colouring it
   red would train someone to ignore the colour.
+
+### When a rule is due
+
+`scheduler::due` is a pure function — no store, no filesystem, no clock of
+its own — so the question that starts an unattended backup is answerable in
+a test as a table of dates.
+
+**A schedule says how often, not when.** `Daily` means the last *successful*
+run was on an earlier local calendar day; `Weekly` an earlier week,
+`Monthly` an earlier month. There is no firing time. The alternative,
+"daily at 02:00", needs a timezone database, a rule for the hour that
+repeats each autumn and the one that never happens each spring, and
+persisted next-run bookkeeping that has to survive the clock changing
+underneath it — all to express something a backup does not need.
+
+Three things follow:
+
+- **Catch-up is arithmetic, not a feature.** A machine that was off for a
+  week crossed six day boundaries; when it returns the rule is due. Nothing
+  was missed, only delayed, so `catch_up` was dropped in migration 0004 —
+  the same reasoning that removed `allow_deletions` once the layout answered
+  its question.
+- **No timezone database.** `LocalTime::utc_offset_seconds` asks the OS for
+  the offset *at a given instant*, which handles daylight saving by
+  construction because the OS knows what the offset was. It is a separate
+  trait from `PlatformFs` because a clock is not a filesystem, and returns
+  `0` rather than failing: a backup tool that refuses to run over a time
+  zone it cannot read has chosen the worse harm.
+- **Measured from the last success, not the last run.** A rule failing every
+  night stays due rather than going quiet after its first attempt.
+
+`Manual`, disabled and custom-schedule rules are never due, each with its
+own reason, because the table has to say which. Cron is in the data model
+and nothing evaluates it: treating it as daily would run a backup on a
+schedule nobody chose, and treating it as manual would hide that the
+setting does nothing.
 
 ## Volume identity
 

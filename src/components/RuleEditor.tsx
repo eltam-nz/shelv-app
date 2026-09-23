@@ -67,7 +67,6 @@ function emptySpec(source: VolumePath): RuleSpec {
     retention: { kind: "unlimited" },
     schedule: { kind: "manual" },
     run_on_connect: true,
-    catch_up: true,
     placeholders: "hydrate",
     hydrate_budget_bytes: null,
     follow_symlinks: false,
@@ -509,16 +508,7 @@ export function RuleEditor({
                   update({ run_on_connect: v });
                 }}
                 label="Run when the drive is connected"
-                hint="For a drive that is only plugged in occasionally, this matters more than the schedule."
-              />
-
-              <Toggle
-                checked={spec.catch_up}
-                onChange={(v) => {
-                  update({ catch_up: v });
-                }}
-                label="Catch up on missed runs"
-                hint="Run as soon as possible if the machine was off or the drive absent when it was due."
+                hint="For a drive that is only plugged in occasionally, this matters more than the schedule. A rule still runs no more often than its frequency allows."
               />
 
               {/* Deletion is no longer a separate question: it follows from

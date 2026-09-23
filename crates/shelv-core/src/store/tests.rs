@@ -45,7 +45,6 @@ fn sample_spec(source: VolumeId) -> RuleSpec {
         retention: Retention::KeepLastN(6),
         schedule: Schedule::Monthly,
         run_on_connect: true,
-        catch_up: true,
         placeholders: PlaceholderPolicy::HydrateRelease,
         hydrate_budget_bytes: Some(50 * 1024 * 1024 * 1024),
         follow_symlinks: false,

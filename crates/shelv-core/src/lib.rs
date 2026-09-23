@@ -7,6 +7,7 @@
 //! Platform-specific code is confined to [`platform`] and [`cloud`]; see
 //! `docs/PLAN.md` §2.6. CI enforces that boundary.
 
+pub mod civil;
 pub mod cloud;
 pub mod engine;
 pub mod error;

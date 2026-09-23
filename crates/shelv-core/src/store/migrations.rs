@@ -37,10 +37,15 @@ const MIGRATIONS: &[Migration] = &[
         name: "volume nickname",
         sql: include_str!("../../migrations/0003_volume_nickname.sql"),
     },
+    Migration {
+        version: 4,
+        name: "period schedules",
+        sql: include_str!("../../migrations/0004_period_schedules.sql"),
+    },
 ];
 
 /// The schema version this build expects.
-pub const LATEST_VERSION: i64 = 3;
+pub const LATEST_VERSION: i64 = 4;
 
 /// Applies any migrations the database has not yet seen.
 ///
@@ -155,6 +160,39 @@ mod tests {
         assert!(
             conn.query_row("SELECT allow_deletions FROM rule", [], |row| row
                 .get::<_, i64>(0))
+                .is_err(),
+            "the column should be gone"
+        );
+    }
+
+    #[test]
+    fn a_v3_database_loses_catch_up_and_keeps_its_rules() {
+        // The column has a DEFAULT, so a build that stopped writing it would
+        // keep inserting rows happily while the column quietly persisted —
+        // which is exactly what happened before this test existed, and why
+        // registering the migration cannot be left to a fresh-install test.
+        let mut conn = Connection::open_in_memory().unwrap();
+        apply_up_to(&mut conn, 3);
+        conn.execute_batch(
+            "INSERT INTO volume (identity_kind, identity, drive_type)
+             VALUES ('linux_fs_uuid', 'uuid-1', 'removable');
+             INSERT INTO rule (name, source_volume, source_rel, layout, packaging,
+                               catch_up, schedule, created_at)
+             VALUES ('Photos', 1, 'Pictures', 'mirror', 'files', 1, 'daily', 1000);",
+        )
+        .unwrap();
+
+        assert_eq!(migrate(&mut conn).unwrap(), LATEST_VERSION);
+
+        let (name, schedule): (String, String) = conn
+            .query_row("SELECT name, schedule FROM rule", [], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })
+            .unwrap();
+        assert_eq!(name, "Photos");
+        assert_eq!(schedule, "daily", "the schedule itself is unchanged");
+        assert!(
+            conn.query_row("SELECT catch_up FROM rule", [], |row| row.get::<_, i64>(0))
                 .is_err(),
             "the column should be gone"
         );

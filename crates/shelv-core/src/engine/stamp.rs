@@ -13,6 +13,10 @@
 //!
 //! The format sorts lexicographically in chronological order, which is what
 //! makes a directory listing of snapshots useful without any tooling.
+//!
+//! The calendar arithmetic itself lives in [`crate::civil`], which the
+//! scheduler also uses — for the opposite purpose, since a schedule is
+//! about a day on the wall rather than a day in UTC.
 
 /// Formats a Unix timestamp as `YYYY-MM-DDTHHMMSSZ`.
 ///
@@ -30,45 +34,11 @@
 pub fn folder_name(unix_seconds: i64) -> String {
     let days = unix_seconds.div_euclid(86_400);
     let seconds = unix_seconds.rem_euclid(86_400);
-    let (year, month, day) = civil_from_days(days);
+    let (year, month, day) = crate::civil::civil_from_days(days);
     let hour = seconds / 3_600;
     let minute = (seconds % 3_600) / 60;
     let second = seconds % 60;
     format!("{year:04}-{month:02}-{day:02}T{hour:02}{minute:02}{second:02}Z")
-}
-
-/// Converts a count of days since 1970-01-01 into a civil date.
-///
-/// Howard Hinnant's algorithm, which is the standard one: it shifts the year
-/// to start in March so that the leap day falls at the end and the month
-/// lengths become a simple arithmetic series, then unwinds the shift. It is
-/// exact for every date the calendar defines rather than approximating with
-/// 365.25, which drifts.
-#[allow(
-    clippy::integer_division,
-    reason = "every division here is deliberately truncating integer arithmetic"
-)]
-const fn civil_from_days(days: i64) -> (i64, i64, i64) {
-    let shifted = days + 719_468;
-    let era = if shifted >= 0 {
-        shifted
-    } else {
-        shifted - 146_096
-    } / 146_097;
-    let day_of_era = shifted - era * 146_097;
-    let year_of_era =
-        (day_of_era - day_of_era / 1460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
-    let year = year_of_era + era * 400;
-    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
-    let shifted_month = (5 * day_of_year + 2) / 153;
-    let day = day_of_year - (153 * shifted_month + 2) / 5 + 1;
-    let month = if shifted_month < 10 {
-        shifted_month + 3
-    } else {
-        shifted_month - 9
-    };
-    let year = if month <= 2 { year + 1 } else { year };
-    (year, month, day)
 }
 
 #[cfg(test)]

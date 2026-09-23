@@ -46,10 +46,6 @@ schedule: Schedule,
  */
 run_on_connect: boolean, 
 /**
- * Make up runs missed while the machine was off or the drive absent.
- */
-catch_up: boolean, 
-/**
  * What to do about cloud placeholders.
  */
 placeholders: PlaceholderPolicy, 

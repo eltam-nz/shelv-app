@@ -483,7 +483,6 @@ mod tests {
             retention: Retention::Unlimited,
             schedule: Schedule::Manual,
             run_on_connect: false,
-            catch_up: false,
             placeholders: PlaceholderPolicy::Hydrate,
             hydrate_budget_bytes: None,
             follow_symlinks: false,

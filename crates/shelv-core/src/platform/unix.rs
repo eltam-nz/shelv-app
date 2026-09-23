@@ -519,3 +519,27 @@ tmpfs /dev/shm tmpfs rw,nosuid 0 0
         assert!(fs.trash(Path::new("/tmp/whatever")).is_err());
     }
 }
+
+/// The local clock, as libc reports it.
+#[derive(Debug, Clone, Copy)]
+pub struct UnixLocalTime;
+
+impl crate::platform::LocalTime for UnixLocalTime {
+    fn utc_offset_seconds(&self, unix_seconds: i64) -> i32 {
+        // `localtime_r` fills in `tm_gmtoff`, which is the offset in effect
+        // at that instant — daylight saving included — rather than the
+        // zone's nominal one. That is exactly what is wanted, and it is why
+        // this asks the OS per instant instead of caching an offset.
+        let time = unix_seconds as libc::time_t;
+        let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+        // SAFETY: `localtime_r` writes into `tm` and reads `time`; both are
+        // owned here and live for the call. The `_r` form is the
+        // thread-safe one, which matters because the scheduler ticks on its
+        // own thread.
+        let result = unsafe { libc::localtime_r(&raw const time, &raw mut tm) };
+        if result.is_null() {
+            return 0;
+        }
+        i32::try_from(tm.tm_gmtoff).unwrap_or(0)
+    }
+}

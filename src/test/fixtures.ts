@@ -97,7 +97,6 @@ export function makeRule(options: RuleOptions): RuleRow {
         retention: { kind: "keep_last_n", value: 6 },
         schedule: options.schedule,
         run_on_connect: true,
-        catch_up: true,
         placeholders: "hydrate",
         hydrate_budget_bytes: null,
         follow_symlinks: false,
