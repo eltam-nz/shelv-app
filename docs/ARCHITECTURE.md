@@ -48,8 +48,9 @@ a concrete implementation. `scripts/check-platform-boundary.sh` fails CI if the
 | `view/` | Aggregates for the UI: a rule plus its tags, destinations, availability and last result. |
 | `engine/` | Plan, execute, prune. `engine::planner` decides and writes nothing; `engine::copier` writes. Deletion, snapshots and pruning are **M1.3–M1.4, M3**. |
 | `cloud/` | OneDrive hydration, budgets, pin-state restore. **M4.** |
-| `scheduler/` | Cron evaluation, catch-up, run-on-connect, the run queue. **M3.** |
-| `safety/` | Path canonicalisation and the destructive-operation guards. **M1.** |
+| `scheduler/` | Whether a rule is due. The queue and run-on-connect are **M3.2**. |
+| `safety/` | Path canonicalisation and the destructive-operation guards. |
+| `civil/` | Calendar arithmetic: instants to dates, and the periods a schedule counts in. |
 | `volumes/` | Volume tracking and identity verification. **M1.** |
 | `watch/` | Notices that the set of attached drives has changed, and reports it only when it really has. |
 
@@ -291,6 +292,168 @@ stop it.
   failure — that is the ordinary case for a removable drive, and colouring it
   red would train someone to ignore the colour.
 
+### When a rule is due
+
+`scheduler::due` is a pure function — no store, no filesystem, no clock of
+its own — so the question that starts an unattended backup is answerable in
+a test as a table of dates.
+
+**A schedule says how often, not when.** `Daily` means the last *successful*
+run was on an earlier local calendar day; `Weekly` an earlier week,
+`Monthly` an earlier month. There is no firing time. The alternative,
+"daily at 02:00", needs a timezone database, a rule for the hour that
+repeats each autumn and the one that never happens each spring, and
+persisted next-run bookkeeping that has to survive the clock changing
+underneath it — all to express something a backup does not need.
+
+Three things follow:
+
+- **Catch-up is arithmetic, not a feature.** A machine that was off for a
+  week crossed six day boundaries; when it returns the rule is due. Nothing
+  was missed, only delayed, so `catch_up` was dropped in migration 0004 —
+  the same reasoning that removed `allow_deletions` once the layout answered
+  its question.
+- **No timezone database.** `LocalTime::utc_offset_seconds` asks the OS for
+  the offset *at a given instant*, which handles daylight saving by
+  construction because the OS knows what the offset was. It is a separate
+  trait from `PlatformFs` because a clock is not a filesystem, and returns
+  `0` rather than failing: a backup tool that refuses to run over a time
+  zone it cannot read has chosen the worse harm.
+- **Measured from the last success, not the last run.** A rule failing every
+  night stays due rather than going quiet after its first attempt.
+
+`Manual`, disabled and custom-schedule rules are never due, each with its
+own reason, because the table has to say which. Cron is in the data model
+and nothing evaluates it: treating it as daily would run a backup on a
+schedule nobody chose, and treating it as manual would hide that the
+setting does nothing.
+
+### Refusing a run nobody is watching
+
+M1 only ever deleted with somebody reading a preview. The scheduler removes
+that person, and a mirror faithfully reproduces a source that has gone
+missing by emptying the backup of it — a drive that mounted empty, a folder
+renamed, a sync client that has not finished. `safety::deletion_refusal`
+stands in for the reader who is not there.
+
+An unattended run whose plan would remove **more than a quarter** of what is
+at the destination, **and more than eight files**, stops. Both halves are
+needed: a share alone refuses a two-file folder losing one, which is
+ordinary; a count alone never triggers on a large backup, where losing a
+quarter is exactly the disaster. Neither number is principled — a routine
+day's deletions are a handful out of thousands, and the event this catches
+takes nearly all of them, so a quarter sits far above one and far below the
+other.
+
+It stops **before anything is written**, copies included: a run that has
+decided the source looks wrong must not half-apply itself, since the copies
+come from the same reading of it. The outcome is `RunResult::Refused`, added
+in migration 0005 — not `Failed`, because nothing is broken and a refusal in
+the column someone checks for dying drives would be read as one. The reason
+goes into the run's error text, which is what the history shows.
+
+**Backup Now is never refused.** The preview is the guard there, and someone
+who has read it and pressed the button has already made this decision with
+the numbers on screen.
+
+### Starting a run nobody asked for
+
+`scheduler::sweep` reads the store and the attached volumes and returns the
+rules that should start. It writes nothing and starts nothing, so what the
+scheduler will do is testable without a scheduler.
+
+There are two occasions to look, and they ask different questions:
+
+- **Every fifteen minutes.** Periods are calendar days at the finest, so a
+  tick this slow is still far finer than any of them, and it lets a laptop's
+  disk stay asleep.
+- **When a drive appears.** For an occasionally-connected drive this is the
+  trigger that matters (`docs/PLAN.md` §1.1d). A rule set to run on connect
+  backs up when the drive turns up **even if its period has not passed** —
+  the drive is here now and may not be on the first of the month. A one-hour
+  floor keeps a loose cable from queueing a run on every reconnection.
+  Watching for a drive *appearing*, rather than reacting to any change, is
+  what keeps unplugging one — or renaming it — from starting a backup.
+
+A rule that is due but cannot reach its drives is **left out, not queued to
+fail**: its moment comes when the drive appears. Anything that changes what
+is due — a rule created or edited — nudges the scheduler rather than waiting
+out the tick.
+
+**Scheduled runs queue; manual ones do not.** The scheduler has nobody to
+tell that a run was declined, so its rules wait their turn, deduplicated by
+rule — a rule that is due *and* has just had its drive plugged in is one
+backup. Backup Now has somebody watching, and a place in a line whose length
+they cannot see is worse than an answer, so it is still refused while another
+run is going. The queue moves on whatever happened to the run in front of it;
+a failure must not strand the rules behind it.
+
+The history records which occasion started a run: `schedule`, `on_connect`,
+or `catch_up` when the rule had been due for more than one period. The run is
+no different — the word is there so someone can tell why a backup happened on
+a Tuesday afternoon.
+
+### Pruning old snapshots
+
+`engine::retention` is the only code in Shelv that deletes without a way
+back. Mirror deletions move to a trash folder on the same volume, which
+costs nothing and can be undone; pruning exists precisely to reclaim that
+space, so a trash folder here would defeat the point. What guards it is that
+every condition has to hold before a single folder goes:
+
+- the run that just finished did **everything** it planned — not `Partial`,
+  which may have failed to copy the very file an old snapshot is the last
+  copy of (`docs/PLAN.md` §1.1c);
+- the folder's name parses as one Shelv wrote, through
+  `stamp::parse`, which refuses anything that is not exactly the shape
+  `folder_name` produces — a destination may hold anything, and a directory
+  that merely shares it is never touched;
+- it is not the snapshot this run just made;
+- and the rule asked for a limit at all.
+
+`KeepLastN` counts the snapshot just written, so "keep the last 3" leaves
+three. `KeepDays` measures from the folder's **name**, not its mtime, which
+a copy tool has already touched. What was pruned is recorded in the run
+history, because something that deletes and leaves no record is exactly what
+the history is for.
+
+The trash folders a mirror leaves are **not** pruned, by decision: they are
+the recovery path for the mistake automation makes more likely, and an
+automatic sweep of them would be the same mistake a month later. Clearing
+them is manual.
+
+### The tray, and the pause switch
+
+Shelv runs as a **per-user tray process, never a Windows service**. That is a
+correctness requirement before a convenience one: a service context receives
+`STATUS_CLOUD_FILE_ACCESS_DENIED` instead of `OneDrive` hydration
+(`docs/PLAN.md` §2), so the background half of a tool that backs up cloud
+folders cannot be a service at all.
+
+Closing the window therefore **hides** it. A backup tool that stops backing
+up because somebody closed a window is not automated, and Quit lives in the
+tray menu — which is also where it says it is still running. A machine with
+no tray still works: failing to build one is logged, not fatal, and the
+window is all that is lost.
+
+**Pause holds every automatic backup**, from the tray or the header, and the
+status bar says so — a backup tool that is not backing up has to admit it
+somewhere always visible. It stops runs from *starting*; a run already going
+is left to finish, since nothing is left half-written either way and the next
+run would only repeat the work. Cancel is there for the stronger thing. It
+is deliberately **not persisted**: a pause is a decision about this
+afternoon, and coming back from a restart still silently paused is the worst
+kind of quiet.
+
+**Run at login is off until asked for**, in the About panel. The frontend
+asks through a command taking a boolean, so `tauri-plugin-autostart`'s own
+commands stay out of `capabilities/` and the id-only IPC surface is
+unchanged.
+
+**Notifications only when something needs a person**: failed, refused, or
+partial. One after every successful backup is one nobody reads, and the
+value of the refusal notice is that it interrupts.
+
 ## Volume identity
 
 The single most important decision in the data model, because getting it wrong
@@ -458,6 +621,19 @@ token, so it follows the palette instead of introducing a colour the
 contrast check has never seen, and a disabled Backup Now stays inert: a row
 whose rule cannot run must not light up under the pointer as though it
 could.
+
+**Next Backup answers the question it is named for.** It showed an em dash
+from M0 until M3 precisely so it could not lie, and the same standard
+applies now: "Due now", "Tomorrow", a weekday while there is only one it
+could mean, a date beyond that, "Manual only", "Disabled", "Paused". The
+answer is computed in Rust, because it is calendar arithmetic in the
+machine's own time zone and a second implementation in TypeScript could
+disagree about what day it is.
+
+The one case worth the extra words is a rule that is due and cannot reach
+its drives: it says **"When Archive 4TB is connected"** rather than "Due
+now". A rule that is due but motionless reads as something being wrong;
+naming the drive turns it into something waiting for you.
 
 Deleting a rule lives in the editor's footer, at the opposite end from Save,
 and opens a confirmation. Not in the table: a row already carries an action

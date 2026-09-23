@@ -45,7 +45,6 @@ fn sample_spec(source: VolumeId) -> RuleSpec {
         retention: Retention::KeepLastN(6),
         schedule: Schedule::Monthly,
         run_on_connect: true,
-        catch_up: true,
         placeholders: PlaceholderPolicy::HydrateRelease,
         hydrate_budget_bytes: Some(50 * 1024 * 1024 * 1024),
         follow_symlinks: false,
@@ -243,6 +242,7 @@ fn a_run_records_its_outcome_and_counters() {
         placeholders_skipped: 1,
         bytes_hydrated: 2_000_000_000,
         bytes_released: 2_000_000_000,
+        snapshots_pruned: 2,
     };
     store
         .finish_run(

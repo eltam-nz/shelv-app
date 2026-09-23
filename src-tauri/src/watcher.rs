@@ -7,6 +7,11 @@
 
 use std::thread;
 
+use std::collections::HashSet;
+
+use shelv_core::model::VolumeId;
+use shelv_core::scheduler::Sweep;
+use shelv_core::view::VolumeStatus;
 use shelv_core::watch::{VolumeWatch, POLL_INTERVAL};
 use tauri::{AppHandle, Emitter, Manager, Runtime};
 
@@ -29,8 +34,9 @@ pub fn spawn<R: Runtime>(app: &AppHandle<R>) {
         .name("shelv-volume-watch".to_owned())
         .spawn(move || {
             let mut watch = VolumeWatch::new();
+            let mut available: HashSet<VolumeId> = HashSet::new();
             loop {
-                tick(&app, &mut watch);
+                tick(&app, &mut watch, &mut available);
                 thread::sleep(POLL_INTERVAL);
             }
         })
@@ -43,7 +49,11 @@ pub fn spawn<R: Runtime>(app: &AppHandle<R>) {
         );
 }
 
-fn tick<R: Runtime>(app: &AppHandle<R>, watch: &mut VolumeWatch) {
+fn tick<R: Runtime>(
+    app: &AppHandle<R>,
+    watch: &mut VolumeWatch,
+    available: &mut HashSet<VolumeId>,
+) {
     let poll = match app.state::<AppState>().poll_volumes(watch, now()) {
         Ok(poll) => poll,
         Err(e) => {
@@ -63,4 +73,25 @@ fn tick<R: Runtime>(app: &AppHandle<R>, watch: &mut VolumeWatch) {
     if let Err(e) = app.emit(VOLUMES_CHANGED, ()) {
         tracing::warn!(error = %e, "could not notify the window");
     }
+
+    // A drive *appearing* is a scheduling event; a drive being pulled out
+    // is not. Comparing against the previous set rather than reacting to
+    // any change is what keeps an unplug — or a rename, which also counts
+    // as a change — from queueing a backup.
+    let now_available = writable(&poll.statuses);
+    let appeared = now_available.difference(available).count() > 0;
+    *available = now_available;
+
+    if appeared {
+        crate::scheduler::nudge(app, Sweep::DriveAppeared);
+    }
+}
+
+/// The volumes that can be written to right now.
+fn writable(statuses: &[VolumeStatus]) -> HashSet<VolumeId> {
+    statuses
+        .iter()
+        .filter(|status| status.availability.is_writable())
+        .map(|status| status.volume.id)
+        .collect()
 }

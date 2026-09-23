@@ -317,6 +317,52 @@ pub trait CloudPlaceholders: Send + Sync {
     fn is_supported(&self) -> bool;
 }
 
+/// What the local clock is doing, which only the operating system knows.
+///
+/// Separate from [`PlatformFs`] because it is not a filesystem concern, and
+/// because nothing in the engine needs it: only the scheduler does, and
+/// only to answer "what day is it here?".
+///
+/// Deliberately **not** a timezone database. Shelv never needs to know the
+/// rule that produced an offset, project one into the future, or name the
+/// zone — only what the offset was at a given instant, which the OS will
+/// answer for any instant including one on the far side of a
+/// daylight-saving change (`docs/M3.md`).
+pub trait LocalTime: Send + Sync {
+    /// Seconds east of UTC in effect at `unix_seconds`.
+    ///
+    /// Returns `0` rather than failing if the OS will not say. A scheduler
+    /// that refused to run because it could not read a timezone would be a
+    /// backup tool that stops backing up over a clock setting; being up to
+    /// a day out on when "daily" rolls over is the lesser harm, and the
+    /// machines Shelv runs on are not in UTC-12.
+    fn utc_offset_seconds(&self, unix_seconds: i64) -> i32;
+}
+
+/// A zone at a fixed offset, for tests and for anywhere a real one is not
+/// wanted.
+#[derive(Debug, Clone, Copy)]
+pub struct FixedOffset(pub i32);
+
+impl LocalTime for FixedOffset {
+    fn utc_offset_seconds(&self, _unix_seconds: i64) -> i32 {
+        self.0
+    }
+}
+
+/// The [`LocalTime`] implementation for the host this build targets.
+#[must_use]
+pub fn host_local_time() -> Box<dyn LocalTime> {
+    #[cfg(windows)]
+    {
+        Box::new(windows::WindowsLocalTime)
+    }
+    #[cfg(all(unix, not(windows)))]
+    {
+        Box::new(unix::UnixLocalTime)
+    }
+}
+
 /// The [`PlatformFs`] implementation for the host this build targets.
 #[must_use]
 pub fn host_fs() -> Box<dyn PlatformFs> {

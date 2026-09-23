@@ -80,7 +80,7 @@ describe("RuleTable", () => {
   it("shows the remaining rule settings in the detailed view", () => {
     render(<RuleTable rows={sampleRows()} view="detailed" />);
 
-    for (const header of ["Cloud", "On connect", "Catch up", "Keep", "Links", "Ignore"]) {
+    for (const header of ["Cloud", "On connect", "Keep", "Links", "Ignore"]) {
       expect(
         screen.getByRole("columnheader", { name: new RegExp(header, "i") }),
         `missing column: ${header}`,
@@ -407,9 +407,67 @@ describe("RuleTable", () => {
     expect(screen.getByText(/No rules match the selected tags/i)).toBeInTheDocument();
   });
 
-  it("shows an em dash for Next Backup until the scheduler exists", () => {
-    render(<RuleTable rows={sampleRows()} />);
-    expect(cellText(0, /Next Backup/i)).toBe("—");
+  it("says when a rule will next run by itself", () => {
+    const rows = sampleRows();
+    const first = rows[0];
+    expect(first).toBeDefined();
+    if (!first) return;
+
+    // Due, and every drive is where it should be.
+    first.due = { kind: "now" };
+    for (const d of first.destinations) d.status.availability = "available";
+    first.source.availability = "available";
+    render(<RuleTable rows={rows} />);
+    expect(cellText(0, /Next Backup/i)).toBe("Due now");
+  });
+
+  it("says which drive a due rule is waiting for, rather than that it is due", () => {
+    // "Due now" beside a rule that cannot move reads as something being
+    // wrong. Naming the drive turns it into something waiting for you.
+    const rows = sampleRows();
+    const first = rows[0];
+    expect(first).toBeDefined();
+    if (!first) return;
+
+    first.due = { kind: "now" };
+    for (const d of first.destinations) d.status.availability = "disconnected";
+    render(<RuleTable rows={rows} />);
+    expect(cellText(0, /Next Backup/i)).toMatch(/^When .+ is connected$/);
+  });
+
+  it("names the reason a rule never runs by itself", () => {
+    const rows = sampleRows();
+    const first = rows[0];
+    expect(first).toBeDefined();
+    if (!first) return;
+
+    first.due = { kind: "never", reason: "manual" };
+    render(<RuleTable rows={rows} />);
+    expect(cellText(0, /Next Backup/i)).toBe("Manual only");
+  });
+
+  it("says a rule is paused rather than when it would have run", () => {
+    // A backup tool that is not backing up has to admit it wherever
+    // somebody looks for the answer.
+    const rows = sampleRows();
+    const first = rows[0];
+    expect(first).toBeDefined();
+    if (!first) return;
+
+    first.due = { kind: "now" };
+    render(<RuleTable rows={rows} paused />);
+    expect(cellText(0, /Next Backup/i)).toBe("Paused");
+  });
+
+  it("still says Manual only while paused, since pausing changes nothing for it", () => {
+    const rows = sampleRows();
+    const first = rows[0];
+    expect(first).toBeDefined();
+    if (!first) return;
+
+    first.due = { kind: "never", reason: "manual" };
+    render(<RuleTable rows={rows} paused />);
+    expect(cellText(0, /Next Backup/i)).toBe("Manual only");
   });
 
   it("keeps the actions pinned to the right edge of every row", () => {

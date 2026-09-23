@@ -4,11 +4,17 @@
 //! This is the piece that gives it a thread to run on, turns its callbacks
 //! into events, and lets the window stop it.
 //!
-//! One run at a time, deliberately. Two runs could otherwise write to one
+//! One run at a time, deliberately: two runs could otherwise write to one
 //! drive at once, and a second Backup Now on a rule already running would
-//! copy the same tree twice. The scheduler in M3 will queue runs per volume;
-//! until then, refusing the second is the honest behaviour.
+//! copy the same tree twice.
+//!
+//! **Scheduled runs queue; manual ones do not.** The scheduler has nobody
+//! to tell, so a rule it wants started waits its turn. Backup Now has
+//! somebody watching, and a place in a line whose length they cannot see is
+//! worse than an answer: it is refused while another run is going, and says
+//! so.
 
+use std::collections::VecDeque;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -35,10 +41,12 @@ pub const RUN_FINISHED: &str = "shelv://run-finished";
 /// anyone can read and slow enough to cost nothing.
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
 
-/// The run currently going, if any.
+/// The run currently going, and the ones waiting.
 #[derive(Debug, Default)]
 pub struct Runner {
     current: Mutex<Option<Current>>,
+    /// Rules the scheduler wants started, oldest first.
+    pending: Mutex<VecDeque<(RuleId, RunTrigger)>>,
 }
 
 /// A run in progress.
@@ -88,6 +96,33 @@ impl Runner {
         *self.locked() = None;
     }
 
+    /// Adds a rule the scheduler wants run, if it is not already queued or
+    /// running.
+    ///
+    /// Deduplicated by rule: a rule that is due *and* has just had its drive
+    /// plugged in is one backup, not two.
+    fn queue(&self, rule: RuleId, trigger: RunTrigger) {
+        if self.running() == Some(rule) {
+            return;
+        }
+        let mut pending = self
+            .pending
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if pending.iter().any(|(queued, _)| *queued == rule) {
+            return;
+        }
+        pending.push_back((rule, trigger));
+    }
+
+    /// Takes the next queued rule, if there is one.
+    fn take_next(&self) -> Option<(RuleId, RunTrigger)> {
+        self.pending
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .pop_front()
+    }
+
     /// The slot, recovering from a poisoned lock rather than propagating it.
     ///
     /// A panic in a run thread must not leave Backup Now permanently
@@ -107,8 +142,7 @@ impl Runner {
 /// Refuses while another run is going: two runs could otherwise write to one
 /// drive at once (`docs/ARCHITECTURE.md`, Concurrency).
 pub fn start<R: Runtime>(app: &AppHandle<R>, rule: RuleId) -> shelv_core::Result<()> {
-    let state = app.state::<AppState>();
-    let cancel = state.runner.claim(rule).map_err(|busy| {
+    spawn_run(app, rule, RunTrigger::Manual).map_err(|busy| {
         shelv_core::CoreError::Refused(if busy == rule {
             "that backup is already running".to_owned()
         } else {
@@ -116,16 +150,37 @@ pub fn start<R: Runtime>(app: &AppHandle<R>, rule: RuleId) -> shelv_core::Result
              cannot write to one drive at once."
                 .to_owned()
         })
-    })?;
+    })
+}
+
+/// Asks for a scheduled run, which waits rather than being refused.
+///
+/// Called from the scheduler, which has nobody to tell that a run was
+/// declined — so a rule it wants started joins the queue and begins when
+/// the current run ends.
+pub fn enqueue<R: Runtime>(app: &AppHandle<R>, rule: RuleId, trigger: RunTrigger) {
+    let state = app.state::<AppState>();
+    if spawn_run(app, rule, trigger).is_err() {
+        state.runner.queue(rule, trigger);
+    }
+}
+
+/// Starts a run now, or reports which rule is in the way.
+fn spawn_run<R: Runtime>(
+    app: &AppHandle<R>,
+    rule: RuleId,
+    trigger: RunTrigger,
+) -> Result<(), RuleId> {
+    let cancel = app.state::<AppState>().runner.claim(rule)?;
 
     let handle = app.clone();
-    thread::Builder::new()
+    let spawned = thread::Builder::new()
         .name("shelv-backup".to_owned())
         .spawn(move || {
             let observer = Reporter::new(&handle, rule, Arc::clone(&cancel));
             let state = handle.state::<AppState>();
 
-            let outcome = state.run(rule, RunTrigger::Manual, &observer);
+            let outcome = state.run(rule, trigger, &observer);
 
             // Released before the event, so a frontend that starts another
             // run the moment it hears "finished" is not refused for a run
@@ -144,17 +199,25 @@ pub fn start<R: Runtime>(app: &AppHandle<R>, rule: RuleId) -> shelv_core::Result
                     error: Some(e.to_string()),
                 },
             };
+            notify(&handle, &finished);
+
             if let Err(e) = handle.emit(RUN_FINISHED, &finished) {
                 tracing::warn!(error = %e, "could not tell the window the run finished");
             }
-        })
-        .map_err(|e| {
-            // The claim has to be given back, or a failure to spawn leaves
-            // Backup Now refusing every rule until the app restarts.
-            app_state_release(app);
-            shelv_core::CoreError::Io(format!("could not start the backup thread: {e}"))
-        })?;
 
+            // Whatever happened to this one, the queue moves on. A failed
+            // run must not strand the rules behind it.
+            if let Some((next, trigger)) = handle.state::<AppState>().runner.take_next() {
+                let _ = spawn_run(&handle, next, trigger);
+            }
+        });
+
+    if spawned.is_err() {
+        // The claim has to be given back, or a failure to spawn leaves
+        // Backup Now refusing every rule until the app restarts.
+        app_state_release(app);
+        tracing::error!("could not start the backup thread");
+    }
     Ok(())
 }
 
@@ -268,5 +331,120 @@ impl<R: Runtime> CopyObserver for Reporter<R> {
 
     fn cancelled(&self) -> bool {
         self.cancel.load(Ordering::Relaxed)
+    }
+}
+
+/// Tells the user about a run that did not simply work.
+///
+/// **Only when something needs them.** A notification after every
+/// successful backup is a notification nobody reads, and the whole value of
+/// the refusal notice is that it interrupts. Success is in the window, in
+/// the row, where somebody who wants to check can look.
+fn notify<R: Runtime>(app: &AppHandle<R>, finished: &RunFinished) {
+    use shelv_core::model::RunResult;
+    use tauri_plugin_notification::NotificationExt;
+
+    let (title, body) = if let Some(error) = &finished.error {
+        ("Backup could not run", error.clone())
+    } else {
+        let worst = finished
+            .summaries
+            .iter()
+            .filter_map(|summary| summary.result)
+            .min_by_key(|result| match result {
+                // Worst first, so one destination going wrong is what the
+                // notification is about even if another went fine.
+                RunResult::Refused => 0,
+                RunResult::Failed => 1,
+                RunResult::Partial => 2,
+                RunResult::Cancelled => 3,
+                RunResult::Ok => 4,
+            });
+
+        match worst {
+            Some(RunResult::Refused) => (
+                "Backup stopped itself",
+                finished
+                    .summaries
+                    .iter()
+                    .find_map(|summary| summary.note.clone())
+                    .unwrap_or_else(|| {
+                        "The backup would have removed most of the destination.".to_owned()
+                    }),
+            ),
+            Some(RunResult::Failed) => (
+                "Backup failed",
+                "Shelv could not complete this backup. Open Shelv to see why.".to_owned(),
+            ),
+            Some(RunResult::Partial) => (
+                "Backup finished with problems",
+                "Some files could not be read or written. Open Shelv to see which.".to_owned(),
+            ),
+            // Cancelled is the user's own doing, and Ok needs no telling.
+            _ => return,
+        }
+    };
+
+    if let Err(e) = app.notification().builder().title(title).body(body).show() {
+        tracing::warn!(error = %e, "could not show a notification");
+    }
+}
+
+#[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    reason = "a panic in a test is the failure report"
+)]
+mod tests {
+    use super::*;
+
+    fn rule(id: i64) -> RuleId {
+        RuleId(id)
+    }
+
+    #[test]
+    fn a_rule_is_queued_once_however_many_times_it_is_asked_for() {
+        // A rule that is due *and* has just had its drive plugged in is one
+        // backup, not two — and a scheduler sweeping every quarter of an
+        // hour must not pile up copies of a rule that is waiting.
+        let runner = Runner::default();
+        runner.queue(rule(1), RunTrigger::Schedule);
+        runner.queue(rule(1), RunTrigger::OnConnect);
+        runner.queue(rule(2), RunTrigger::Schedule);
+
+        assert_eq!(runner.take_next(), Some((rule(1), RunTrigger::Schedule)));
+        assert_eq!(runner.take_next(), Some((rule(2), RunTrigger::Schedule)));
+        assert_eq!(runner.take_next(), None);
+    }
+
+    #[test]
+    fn the_rule_already_running_is_not_queued_behind_itself() {
+        let runner = Runner::default();
+        runner.claim(rule(1)).expect("the runner is idle");
+
+        runner.queue(rule(1), RunTrigger::Schedule);
+        assert_eq!(runner.take_next(), None, "it is already happening");
+
+        runner.queue(rule(2), RunTrigger::Schedule);
+        assert_eq!(runner.take_next(), Some((rule(2), RunTrigger::Schedule)));
+    }
+
+    #[test]
+    fn claiming_reports_which_rule_is_in_the_way() {
+        // Backup Now turns this into a message; the scheduler turns it into
+        // a place in the queue. Both need to know it was refused and why.
+        let runner = Runner::default();
+        runner.claim(rule(1)).expect("the runner is idle");
+        assert_eq!(runner.claim(rule(2)).err(), Some(rule(1)));
+        assert_eq!(
+            runner.claim(rule(1)).err(),
+            Some(rule(1)),
+            "including itself"
+        );
+
+        runner.release();
+        assert!(runner.claim(rule(2)).is_ok(), "released, so free again");
     }
 }

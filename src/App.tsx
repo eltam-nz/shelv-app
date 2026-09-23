@@ -14,7 +14,9 @@ import {
   forgetDrive,
   listDrives,
   listRules,
+  isPaused,
   listTags,
+  onPausedChanged,
   onRunFinished,
   onRunProgress,
   onVolumesChanged,
@@ -22,6 +24,7 @@ import {
   planRun,
   runningRule,
   runRule,
+  setPaused,
   setDriveNickname,
   ShelvError,
 } from "./lib/ipc";
@@ -92,6 +95,7 @@ export function App() {
   const [running, setRunning] = useState<RuleId | null>(null);
   const [progress, setProgress] = useState<RunProgress | null>(null);
   const [outcome, setOutcome] = useState<RunFinished | null>(null);
+  const [paused, setPausedState] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -156,6 +160,13 @@ export function App() {
       else stop.push(unlisten);
     };
 
+    void isPaused()
+      .then(setPausedState)
+      .catch(() => {
+        // Not knowing reads as not paused, which is what the backend does
+        // anyway; the tray is the authority either way.
+      });
+    void onPausedChanged(setPausedState).then(attach);
     void runningRule()
       .then(setRunning)
       .catch(() => {
@@ -283,6 +294,17 @@ export function App() {
                 setPanel({ kind: "tags" });
               }}
             />
+            <PauseToggle
+              paused={paused}
+              onChange={(next) => {
+                setPausedState(next);
+                void setPaused(next).catch(() => {
+                  // The backend is the authority; ask it again rather than
+                  // leaving the button showing something it did not do.
+                  void isPaused().then(setPausedState);
+                });
+              }}
+            />
             <ViewToggle view={view} onChange={setView} />
             <button
               type="button"
@@ -337,6 +359,11 @@ export function App() {
               {rows.length} {rows.length === 1 ? "rule" : "rules"}
               {unreachable > 0 &&
                 ` · ${String(unreachable)} with no reachable destination`}
+              {paused && (
+                <span style={{ color: "var(--result-partial)" }}>
+                  {" · automatic backups are paused"}
+                </span>
+              )}
             </>
           )
         }
@@ -366,6 +393,7 @@ export function App() {
                 }}
                 onBackUp={(row) => void backUp(row)}
                 running={running}
+                paused={paused}
                 onCreate={() => {
                   setPanel({ kind: "new-rule" });
                 }}
@@ -667,5 +695,51 @@ function RunOutcomeLine({ rows, outcome }: { rows: RuleRow[]; outcome: RunFinish
       {deleted > 0 && ` · ${String(deleted)} moved to trash`}
       {skipped > 0 && ` · ${String(skipped)} destination unavailable`}
     </span>
+  );
+}
+
+/**
+ * Holds every automatic backup.
+ *
+ * In the header rather than buried in a menu, because the moment somebody
+ * wants it — about to travel, about to work off the same drive — they want
+ * it now. Paused is stated in the status bar as well: a backup tool that is
+ * not backing up has to say so somewhere that is always visible.
+ *
+ * It does not stop a run already going. Nothing is left half-written either
+ * way, and the next run would only have to do the same work again; Cancel
+ * is there for the stronger thing.
+ */
+function PauseToggle({
+  paused,
+  onChange,
+}: {
+  paused: boolean;
+  onChange: (paused: boolean) => void;
+}) {
+  return (
+    <button
+      type="button"
+      aria-pressed={paused}
+      onClick={() => {
+        onChange(!paused);
+      }}
+      title={
+        paused
+          ? "Automatic backups are held. Backup Now still works."
+          : "Hold every automatic backup until you resume"
+      }
+      className="rounded border border-border px-2.5 py-1 text-xs"
+      style={
+        paused
+          ? {
+              color: "var(--result-partial)",
+              backgroundColor: "var(--accent-amber-fill)",
+            }
+          : { color: "var(--fg-muted)" }
+      }
+    >
+      {paused ? "Paused" : "Pause"}
+    </button>
   );
 }

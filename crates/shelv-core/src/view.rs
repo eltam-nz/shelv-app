@@ -10,7 +10,8 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use crate::model::{Destination, Rule, Run, StoredVolume, Tag};
-use crate::platform::{DriveType, PlatformFs};
+use crate::platform::{DriveType, LocalTime, PlatformFs};
+use crate::scheduler::{due, Due};
 use crate::store::Store;
 use crate::Result;
 
@@ -86,6 +87,13 @@ pub struct RuleRow {
     /// The most recent run, or `None` if it has never run. The table shows
     /// "Never run" for `None`, which is distinct from a failure.
     pub last_run: Option<Run>,
+    /// When it will next start by itself.
+    ///
+    /// Answered here rather than in the frontend because the answer is
+    /// calendar arithmetic in the machine's own time zone, and duplicating
+    /// that in TypeScript would mean two implementations that could
+    /// disagree about what day it is.
+    pub due: Due,
 }
 
 impl RuleRow {
@@ -261,7 +269,12 @@ pub fn refresh_stored_volumes(store: &Store, fs: &dyn PlatformFs, now: i64) -> R
 }
 
 /// Builds every row of the rule table.
-pub fn rule_rows(store: &Store, fs: &dyn PlatformFs) -> Result<Vec<RuleRow>> {
+pub fn rule_rows(
+    store: &Store,
+    fs: &dyn PlatformFs,
+    zone: &dyn LocalTime,
+    now: i64,
+) -> Result<Vec<RuleRow>> {
     let statuses = volume_statuses(store, fs)?;
     let status_for =
         |id| -> Option<VolumeStatus> { statuses.iter().find(|s| s.volume.id == id).cloned() };
@@ -289,6 +302,7 @@ pub fn rule_rows(store: &Store, fs: &dyn PlatformFs) -> Result<Vec<RuleRow>> {
                 source: status_for(rule.spec.source.volume)
                     .unwrap_or_else(|| unknown_volume(rule.spec.source.volume)),
                 last_run: store.last_run(rule.id)?,
+                due: due(&rule.spec, store.last_success(rule.id)?, now, zone),
                 rule,
             })
         })

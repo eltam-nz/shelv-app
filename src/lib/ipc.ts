@@ -300,6 +300,34 @@ export async function onRunFinished(
 }
 
 /**
+ * Holds or resumes automatic backups.
+ *
+ * Stops runs from starting; a run already going is left to finish. Cancel is
+ * the stronger thing.
+ */
+export const setPaused = (paused: boolean): Promise<void> =>
+  callVoid("set_paused", { paused });
+
+/** Whether automatic backups are held. */
+export const isPaused = (): Promise<boolean> => call<boolean>("is_paused", {});
+
+/** Turns running at login on or off. */
+export const setRunAtLogin = (enabled: boolean): Promise<void> =>
+  callVoid("set_run_at_login", { enabled });
+
+/** Whether Shelv is set to run at login. */
+export const runsAtLogin = (): Promise<boolean> => call<boolean>("runs_at_login", {});
+
+/** Runs `onChange` when the pause switch moves, including from the tray. */
+export async function onPausedChanged(
+  onChange: (paused: boolean) => void,
+): Promise<() => void> {
+  return listen<boolean>("shelv://paused-changed", (event) => {
+    onChange(event.payload);
+  });
+}
+
+/**
  * Runs `onChange` whenever the set of attached drives changes.
  *
  * The backend polls and emits only on a real change (see

@@ -3,4 +3,4 @@
 /**
  * How a run finished.
  */
-export type RunResult = "ok" | "partial" | "failed" | "cancelled";
+export type RunResult = "ok" | "partial" | "failed" | "cancelled" | "refused";

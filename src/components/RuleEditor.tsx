@@ -67,7 +67,6 @@ function emptySpec(source: VolumePath): RuleSpec {
     retention: { kind: "unlimited" },
     schedule: { kind: "manual" },
     run_on_connect: true,
-    catch_up: true,
     placeholders: "hydrate",
     hydrate_budget_bytes: null,
     follow_symlinks: false,
@@ -368,32 +367,37 @@ export function RuleEditor({
                 </Field>
 
                 <Field label="How often">
+                  {/* Custom (cron) schedules are in the data model and
+                      nothing evaluates them, so the option is not offered:
+                      a setting that silently never fires is worse than one
+                      that is absent. A rule saved with one before now still
+                      shows it, and says plainly that it will not run. */}
                   <Select
                     value={scheduleValue(spec.schedule)}
                     onChange={(v) => {
-                      update({
-                        schedule:
-                          v === "cron"
-                            ? { kind: "cron", value: "0 3 * * 1" }
-                            : ({ kind: v } as Schedule),
-                      });
+                      update({ schedule: { kind: v } as Schedule });
                     }}
                     options={[
                       ["manual", "Only when I ask"],
                       ["daily", "Daily"],
                       ["weekly", "Weekly"],
                       ["monthly", "Monthly"],
-                      ["cron", "Custom schedule"],
+                      ...(spec.schedule.kind === "cron"
+                        ? ([["cron", "Custom schedule (not supported)"]] as [
+                            string,
+                            string,
+                          ][])
+                        : []),
                     ]}
                   />
                   {spec.schedule.kind === "cron" && (
-                    <input
-                      value={spec.schedule.value}
-                      onChange={(e) => {
-                        update({ schedule: { kind: "cron", value: e.target.value } });
-                      }}
-                      className="mt-2 w-full rounded border border-border bg-bg px-2 py-1 font-mono text-xs"
-                    />
+                    <p
+                      className="mt-2 text-xs"
+                      style={{ color: "var(--result-partial)" }}
+                    >
+                      Shelv cannot run a custom schedule yet, so this rule only runs when
+                      you ask. Choose one of the others to have it run by itself.
+                    </p>
                   )}
                 </Field>
 
@@ -509,16 +513,7 @@ export function RuleEditor({
                   update({ run_on_connect: v });
                 }}
                 label="Run when the drive is connected"
-                hint="For a drive that is only plugged in occasionally, this matters more than the schedule."
-              />
-
-              <Toggle
-                checked={spec.catch_up}
-                onChange={(v) => {
-                  update({ catch_up: v });
-                }}
-                label="Catch up on missed runs"
-                hint="Run as soon as possible if the machine was off or the drive absent when it was due."
+                hint="For a drive that is only plugged in occasionally, this matters more than the schedule. A rule still runs no more often than its frequency allows."
               />
 
               {/* Deletion is no longer a separate question: it follows from

@@ -42,6 +42,8 @@ pub struct AppState {
     db_path: PathBuf,
     /// The backup currently running, if any.
     pub runner: crate::runner::Runner,
+    /// Whether automatic backups are held.
+    paused: std::sync::atomic::AtomicBool,
 }
 
 impl AppState {
@@ -53,7 +55,40 @@ impl AppState {
             fs,
             db_path,
             runner: crate::runner::Runner::default(),
+            paused: std::sync::atomic::AtomicBool::new(false),
         }
+    }
+
+    /// Whether automatic backups are held.
+    ///
+    /// Deliberately not persisted. A pause is a decision about this
+    /// afternoon — somebody about to travel, or about to work off the same
+    /// drive — and a backup tool that came back from a restart still
+    /// silently paused would be the worst kind of quiet.
+    pub fn paused(&self) -> bool {
+        self.paused.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Holds or resumes automatic backups.
+    pub fn set_paused(&self, paused: bool) {
+        self.paused
+            .store(paused, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Asks the scheduler which rules should start now.
+    ///
+    /// Takes the shared connection rather than opening one: a sweep is a
+    /// handful of reads, not a backup, and it runs on the scheduler thread
+    /// between ticks.
+    pub fn sweep(
+        &self,
+        zone: &dyn shelv_core::platform::LocalTime,
+        now: i64,
+        reason: shelv_core::scheduler::Sweep,
+    ) -> Result<Vec<shelv_core::scheduler::Ready>> {
+        self.with_store(|store| {
+            shelv_core::scheduler::sweep(store, self.fs.as_ref(), zone, now, reason)
+        })
     }
 
     /// Runs a rule, on the calling thread.
@@ -167,14 +202,16 @@ fn reveal_data_folder(state: State<'_, AppState>) -> Result<()> {
 /// This is what the rule table renders.
 #[tauri::command]
 fn list_rules(state: State<'_, AppState>) -> Result<Vec<RuleRow>> {
-    state.with_store(|store| rule_rows(store, state.fs.as_ref()))
+    let zone = shelv_core::platform::host_local_time();
+    state.with_store(|store| rule_rows(store, state.fs.as_ref(), zone.as_ref(), now()))
 }
 
 /// One rule, in the same shape as a table row.
 #[tauri::command]
 fn get_rule(state: State<'_, AppState>, id: RuleId) -> Result<RuleRow> {
+    let zone = shelv_core::platform::host_local_time();
     state.with_store(|store| {
-        rule_rows(store, state.fs.as_ref())?
+        rule_rows(store, state.fs.as_ref(), zone.as_ref(), now())?
             .into_iter()
             .find(|row| row.rule.id == id)
             .ok_or_else(|| CoreError::NotFound(format!("rule {id}")))
@@ -228,47 +265,60 @@ fn validate_rule(
 /// standing instruction: by the time the engine acts on it, whoever wrote it
 /// is usually not watching.
 #[tauri::command]
-fn create_rule(
+fn create_rule<R: Runtime>(
+    app: AppHandle<R>,
     state: State<'_, AppState>,
     spec: RuleSpec,
     destinations: Vec<VolumePath>,
     tags: Vec<TagId>,
 ) -> Result<RuleId> {
-    state.with_store(|store| {
-        refuse_if_unsafe(store, state.fs.as_ref(), &spec, &destinations)?;
-        let id = store.create_rule(&spec, now())?;
-        for (order, destination) in destinations.iter().enumerate() {
-            store.add_destination(id, destination, i64::try_from(order).unwrap_or(i64::MAX))?;
-        }
-        store.set_rule_tags(id, &tags)?;
-        Ok(id)
-    })
+    state
+        .with_store(|store| {
+            refuse_if_unsafe(store, state.fs.as_ref(), &spec, &destinations)?;
+            let id = store.create_rule(&spec, now())?;
+            for (order, destination) in destinations.iter().enumerate() {
+                store.add_destination(id, destination, i64::try_from(order).unwrap_or(i64::MAX))?;
+            }
+            store.set_rule_tags(id, &tags)?;
+            Ok(id)
+        })
+        .inspect(|_| {
+            // A rule saved at 3pm should not appear to do nothing until the
+            // next tick. Looking now is cheap and it is what someone who just
+            // pressed Save expects to see.
+            crate::scheduler::nudge(&app, shelv_core::scheduler::Sweep::Tick);
+        })
 }
 
 /// Replaces a rule's configuration, destinations and tags.
 #[tauri::command]
-fn update_rule(
+fn update_rule<R: Runtime>(
+    app: AppHandle<R>,
     state: State<'_, AppState>,
     id: RuleId,
     spec: RuleSpec,
     destinations: Vec<VolumePath>,
     tags: Vec<TagId>,
 ) -> Result<()> {
-    state.with_store(|store| {
-        refuse_if_unsafe(store, state.fs.as_ref(), &spec, &destinations)?;
-        store.update_rule(id, &spec)?;
+    state
+        .with_store(|store| {
+            refuse_if_unsafe(store, state.fs.as_ref(), &spec, &destinations)?;
+            store.update_rule(id, &spec)?;
 
-        // Replace the destination set. Existing rows are removed rather than
-        // reconciled, since a destination carries no state worth preserving
-        // — run history points at the rule, not at the destination row.
-        for existing in store.destinations(id)? {
-            store.delete_destination(existing.id)?;
-        }
-        for (order, destination) in destinations.iter().enumerate() {
-            store.add_destination(id, destination, i64::try_from(order).unwrap_or(i64::MAX))?;
-        }
-        store.set_rule_tags(id, &tags)
-    })
+            // Replace the destination set. Existing rows are removed rather than
+            // reconciled, since a destination carries no state worth preserving
+            // — run history points at the rule, not at the destination row.
+            for existing in store.destinations(id)? {
+                store.delete_destination(existing.id)?;
+            }
+            for (order, destination) in destinations.iter().enumerate() {
+                store.add_destination(id, destination, i64::try_from(order).unwrap_or(i64::MAX))?;
+            }
+            store.set_rule_tags(id, &tags)
+        })
+        .inspect(|()| {
+            crate::scheduler::nudge(&app, shelv_core::scheduler::Sweep::Tick);
+        })
 }
 
 /// Deletes a rule, along with its destinations, tag links and run history.
@@ -422,6 +472,38 @@ fn running_rule(state: State<'_, AppState>) -> Option<RuleId> {
     state.runner.running()
 }
 
+/// Holds or resumes automatic backups.
+///
+/// Stops runs from starting; a run already going is left to finish, since
+/// nothing is left half-written either way and the next run would only have
+/// to do it again. Cancel is there for the stronger thing.
+#[tauri::command]
+fn set_paused<R: Runtime>(app: AppHandle<R>, paused: bool) {
+    crate::tray::set_paused(&app, paused);
+}
+
+/// Whether automatic backups are held.
+#[tauri::command]
+fn is_paused(state: State<'_, AppState>) -> bool {
+    state.paused()
+}
+
+/// Turns running at login on or off.
+///
+/// Takes a boolean, not a path or a command line: the frontend asks for the
+/// setting and Rust decides what that means, so the autostart plugin's own
+/// commands stay out of `capabilities/`.
+#[tauri::command]
+fn set_run_at_login<R: Runtime>(app: AppHandle<R>, enabled: bool) -> Result<()> {
+    crate::tray::set_run_at_login(&app, enabled)
+}
+
+/// Whether Shelv is set to run at login.
+#[tauri::command]
+fn runs_at_login<R: Runtime>(app: AppHandle<R>) -> bool {
+    crate::tray::runs_at_login(&app)
+}
+
 /// A rule's raw configuration, for the editor.
 #[tauri::command]
 fn get_rule_spec(state: State<'_, AppState>, id: RuleId) -> Result<Rule> {
@@ -521,5 +603,9 @@ pub fn handlers<R: Runtime>() -> impl Fn(Invoke<R>) -> bool + Send + Sync + 'sta
         run_rule,
         cancel_run,
         running_rule,
+        set_paused,
+        is_paused,
+        set_run_at_login,
+        runs_at_login,
     ]
 }

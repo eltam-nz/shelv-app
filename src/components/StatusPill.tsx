@@ -180,6 +180,16 @@ const RESULT: Record<RunResult, Omit<PillProps, "title"> & { title: string }> = 
     color: "var(--result-never)",
     title: "The run was stopped before it finished",
   },
+  // Not a failure, and deliberately not coloured like one: nothing is
+  // broken. The run stopped itself because what it was about to remove
+  // did not look like what the rule meant.
+  refused: {
+    icon: "⊘",
+    label: "Refused",
+    color: "var(--result-partial)",
+    title:
+      "This run would have removed most of the backup, so Shelv stopped without changing anything. Usually it means the source was not there. Run it by hand to see the full list.",
+  },
 };
 
 /**

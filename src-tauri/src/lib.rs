@@ -6,6 +6,8 @@
 
 mod commands;
 mod runner;
+mod scheduler;
+mod tray;
 mod watcher;
 
 use std::path::Path;
@@ -66,6 +68,10 @@ pub fn run() -> Result<(), StartupError> {
     let store = Store::open(&db_path)?;
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .manage(commands::AppState::new(store, fs, db_path))
@@ -75,8 +81,13 @@ pub fn run() -> Result<(), StartupError> {
             // webview keeps its profile. See `open_main_window`.
             open_main_window(app, &data_dir)?;
 
-            // Started after the window so it has something to notify.
+            // The tray before the threads, so a run that finishes early has
+            // somewhere to report to.
+            tray::build(app.handle());
+
+            // Started after the window so they have something to notify.
             watcher::spawn(app.handle());
+            scheduler::spawn(app.handle());
             Ok(())
         })
         .invoke_handler(commands::handlers())
@@ -101,7 +112,7 @@ pub fn run() -> Result<(), StartupError> {
 /// `EBWebView` subdirectory, which it creates itself, so the two do not
 /// become entangled.
 fn open_main_window<R: Runtime>(app: &tauri::App<R>, data_dir: &Path) -> Result<(), tauri::Error> {
-    WebviewWindowBuilder::new(app, MAIN_WINDOW_LABEL, WebviewUrl::default())
+    let window = WebviewWindowBuilder::new(app, MAIN_WINDOW_LABEL, WebviewUrl::default())
         .title("Shelv")
         .inner_size(1480.0, 820.0)
         .min_inner_size(900.0, 480.0)
@@ -112,6 +123,19 @@ fn open_main_window<R: Runtime>(app: &tauri::App<R>, data_dir: &Path) -> Result<
         .background_color(tauri::window::Color(0x14, 0x16, 0x1a, 0xff))
         .data_directory(data_dir.to_path_buf())
         .build()?;
+
+    // Closing hides. Shelv's whole job is to be there when a drive is
+    // plugged in at four in the afternoon, and a backup tool that stops
+    // backing up because somebody closed a window is not automated. Quit is
+    // in the tray menu, which is also where it says it is still running.
+    let handle = window.clone();
+    window.on_window_event(move |event| {
+        if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+            api.prevent_close();
+            let _ = handle.hide();
+        }
+    });
+
     Ok(())
 }
 

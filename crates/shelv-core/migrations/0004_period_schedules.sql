@@ -1,0 +1,12 @@
+-- A schedule says how often, not when, so catch-up is no longer a choice.
+--
+-- `Daily` now means "the last successful run was on an earlier local
+-- calendar day". Under that reading a machine that was off for a week has
+-- crossed six day boundaries, and the rule is simply due: there is nothing
+-- to catch up, because nothing was missed, only delayed.
+--
+-- The column therefore cannot change any behaviour. A toggle in the editor
+-- that does nothing is worse than no toggle, so it goes — the same reasoning
+-- that removed `allow_deletions` in 0002 once the layout answered the
+-- question it was asking (docs/M3.md).
+ALTER TABLE rule DROP COLUMN catch_up;

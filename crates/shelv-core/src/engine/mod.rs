@@ -14,6 +14,7 @@
 
 pub mod copier;
 pub mod planner;
+pub mod retention;
 pub mod run;
 pub mod stamp;
 pub mod trash;
@@ -124,6 +125,9 @@ pub struct RunSummary {
     pub stats: RunStats,
     /// Why it did not start, in words fit to show someone.
     pub skipped: Option<String>,
+    /// What went wrong, or why the run stopped itself. The same words the
+    /// history carries, so a notification and the run list agree.
+    pub note: Option<String>,
 }
 
 /// What the window is told while a run is going.
@@ -253,6 +257,7 @@ fn run_destination(
         result: None,
         stats: RunStats::default(),
         skipped: Some(reason.to_owned()),
+        note: None,
     };
 
     let recorded = store.volume(destination.path.volume)?;
@@ -277,16 +282,42 @@ fn run_destination(
     let started_at = clock();
     let id = store.begin_run(destination.rule, destination.id, trigger, started_at)?;
 
-    match run::execute(fs, source, &root, &options, started_at, observer) {
+    // Manual is the only trigger with somebody at the screen, and the only
+    // one that has already shown its deletions.
+    let watched = if trigger == RunTrigger::Manual {
+        run::Watched::ByHand
+    } else {
+        run::Watched::ByNobody
+    };
+
+    match run::execute(fs, source, &root, &options, started_at, watched, observer) {
         Ok(outcome) => {
-            let stats = stats_of(&outcome);
+            // Only after a run that did everything it planned. A partial
+            // run may have failed to copy the very file an old snapshot is
+            // the last copy of (`docs/PLAN.md` §1.1c).
+            let pruned = if spec.layout == Layout::Snapshot && outcome.result == RunResult::Ok {
+                let report = retention::prune(fs, &root, spec.retention, &outcome.target, clock());
+                for failure in &report.failures {
+                    tracing::warn!(failure, "an old snapshot could not be removed");
+                }
+                report.pruned
+            } else {
+                0
+            };
+
+            let mut stats = stats_of(&outcome);
+            stats.snapshots_pruned = pruned;
             let snapshot = (spec.layout == Layout::Snapshot).then(|| outcome.target.clone());
+            // A refusal carries its reason into the history, where the point
+            // of it is: somebody reading the run list later has to be able
+            // to see what Shelv saw and why it stopped.
+            let note = outcome.refusal.map(|refusal| refusal.to_string());
             store.finish_run(
                 id,
                 outcome.result,
                 &stats,
                 clock(),
-                None,
+                note.as_deref(),
                 snapshot.as_deref(),
             )?;
             Ok(RunSummary {
@@ -295,6 +326,7 @@ fn run_destination(
                 result: Some(outcome.result),
                 stats,
                 skipped: None,
+                note,
             })
         }
         Err(e) => {
@@ -316,6 +348,7 @@ fn run_destination(
                 result: Some(RunResult::Failed),
                 stats: RunStats::default(),
                 skipped: None,
+                note: Some(message),
             })
         }
     }
@@ -483,7 +516,6 @@ mod tests {
             retention: Retention::Unlimited,
             schedule: Schedule::Manual,
             run_on_connect: false,
-            catch_up: false,
             placeholders: PlaceholderPolicy::Hydrate,
             hydrate_budget_bytes: None,
             follow_symlinks: false,
@@ -734,5 +766,133 @@ mod tests {
         let last = store.last_run(rule).unwrap().unwrap();
         assert_eq!(last.started_at, NOW);
         assert_eq!(last.finished_at, Some(NOW + 5));
+    }
+
+    #[test]
+    fn a_scheduled_run_that_would_empty_the_backup_is_recorded_as_refused() {
+        // Through the store, because the history is what someone reads the
+        // next morning: the result has to be distinguishable from a failure
+        // and it has to say what Shelv saw.
+        let src = tempfile::tempdir().unwrap();
+        let dst = tempfile::tempdir().unwrap();
+        for n in 0..20 {
+            fs::write(dst.path().join(format!("photo-{n}.raw")), b"irreplaceable").unwrap();
+        }
+
+        let (store, platform, rule) = fixture(src.path(), dst.path(), Layout::Mirror);
+        let summaries = run_rule(
+            &store,
+            &platform,
+            rule,
+            RunTrigger::Schedule,
+            &|| NOW,
+            &Silent,
+        )
+        .unwrap();
+
+        assert_eq!(summaries[0].result, Some(RunResult::Refused));
+
+        let last = store.last_run(rule).unwrap().unwrap();
+        assert_eq!(last.result, Some(RunResult::Refused));
+        assert!(
+            last.error
+                .unwrap_or_default()
+                .contains("20 of the 20 files"),
+            "the history has to say what it saw"
+        );
+        assert_eq!(fs::read_dir(dst.path()).unwrap().count(), 20);
+    }
+
+    #[test]
+    fn retention_prunes_old_snapshots_after_a_successful_run() {
+        let src = tempfile::tempdir().unwrap();
+        let dst = tempfile::tempdir().unwrap();
+        fs::write(src.path().join("one.raw"), b"hello").unwrap();
+
+        let (store, platform, rule) = fixture(src.path(), dst.path(), Layout::Snapshot);
+        let mut spec = store.rule(rule).unwrap().spec;
+        spec.retention = Retention::KeepLastN(2);
+        store.update_rule(rule, &spec).unwrap();
+
+        // Three runs a day apart, so each writes its own folder.
+        for day in 0..3 {
+            let at = NOW + day * 86_400;
+            run_rule(&store, &platform, rule, RunTrigger::Manual, &|| at, &Silent).unwrap();
+        }
+
+        let folders = fs::read_dir(dst.path()).unwrap().count();
+        assert_eq!(folders, 2, "keep the last two");
+
+        let last = store.last_run(rule).unwrap().unwrap();
+        assert_eq!(
+            last.stats.snapshots_pruned, 1,
+            "the history has to record what was deleted outright"
+        );
+    }
+
+    #[test]
+    fn a_partial_run_prunes_nothing() {
+        // The run copied what it could. Pruning now could remove the last
+        // copy of the very file it failed to read.
+        let src = tempfile::tempdir().unwrap();
+        let dst = tempfile::tempdir().unwrap();
+        fs::write(src.path().join("one.raw"), b"hello").unwrap();
+
+        let (store, platform, rule) = fixture(src.path(), dst.path(), Layout::Snapshot);
+        let mut spec = store.rule(rule).unwrap().spec;
+        spec.retention = Retention::KeepLastN(1);
+        store.update_rule(rule, &spec).unwrap();
+
+        run_rule(
+            &store,
+            &platform,
+            rule,
+            RunTrigger::Manual,
+            &|| NOW,
+            &Silent,
+        )
+        .unwrap();
+
+        // A file that is planned and then gone, which is what makes a run
+        // partial.
+        fs::write(src.path().join("vanishes.raw"), b"x").unwrap();
+        let planned = std::sync::atomic::AtomicBool::new(false);
+        let observer = Vanishing {
+            path: src.path().join("vanishes.raw"),
+            done: &planned,
+        };
+        run_rule(
+            &store,
+            &platform,
+            rule,
+            RunTrigger::Manual,
+            &|| NOW + 86_400,
+            &observer,
+        )
+        .unwrap();
+
+        let last = store.last_run(rule).unwrap().unwrap();
+        assert_eq!(last.result, Some(RunResult::Partial));
+        assert_eq!(last.stats.snapshots_pruned, 0);
+        assert_eq!(
+            fs::read_dir(dst.path()).unwrap().count(),
+            2,
+            "both snapshots are still there"
+        );
+    }
+
+    /// Removes a file once the copy has started, so the run comes out
+    /// `Partial` the way a locked or deleted file makes it.
+    struct Vanishing<'a> {
+        path: PathBuf,
+        done: &'a std::sync::atomic::AtomicBool,
+    }
+
+    impl CopyObserver for Vanishing<'_> {
+        fn planned(&self, _files: u64, _bytes: u64) {
+            if !self.done.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                let _ = fs::remove_file(&self.path);
+            }
+        }
     }
 }

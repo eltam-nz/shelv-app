@@ -8,11 +8,17 @@
 //! Everything here refuses by default. A case this module cannot reason about
 //! is rejected rather than allowed, because the cost of a wrong rejection is a
 //! confused user and the cost of a wrong acceptance is lost files.
+//!
+//! One guard runs later than the rest: [`deletion_refusal`] weighs what a
+//! run is about to remove, which cannot be known until the plan exists. It
+//! is here rather than in the engine because it is the same kind of thing —
+//! a refusal on behalf of somebody who is not watching.
 
 use std::path::{Component, Path};
 
 use serde::{Deserialize, Serialize};
 
+use crate::engine::planner::Plan;
 use crate::model::{RuleSpec, VolumePath};
 use crate::view::VolumeStatus;
 
@@ -334,6 +340,83 @@ pub fn check_rule(
     problems
 }
 
+// -- the unattended deletion guard ---------------------------------------
+
+/// The share of a destination that may disappear in one unattended run
+/// before Shelv stops and asks.
+///
+/// A quarter. There is no principled number here, only a judgement: a
+/// routine day's deletions are a handful of files out of thousands, and the
+/// event this exists to catch — a source that mounted empty, or was renamed
+/// — takes nearly all of them. A quarter sits far above the first and far
+/// below the second.
+const MAX_UNATTENDED_DELETION_SHARE: u64 = 4;
+
+/// Below this many deletions, the share is not considered at all.
+///
+/// Both halves are needed. A percentage alone refuses a two-file folder
+/// losing one file, which is ordinary; a count alone never triggers on a
+/// large backup, where losing a quarter of it is exactly the disaster.
+const MIN_UNATTENDED_DELETIONS: u64 = 8;
+
+/// What an unattended run was about to remove, when that looked wrong.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
+#[ts(export, export_to = "../../../src/types/")]
+pub struct DeletionRefusal {
+    /// Files the plan would have removed from the destination.
+    #[ts(type = "number")]
+    pub deletions: u64,
+    /// Files that were there.
+    #[ts(type = "number")]
+    pub destination_files: u64,
+}
+
+impl std::fmt::Display for DeletionRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "this run would remove {} of the {} files at the destination, \
+             which looks less like a backup than like a source that is not \
+             there. Nothing was changed. Run it by hand to see the full list \
+             and decide.",
+            self.deletions, self.destination_files
+        )
+    }
+}
+
+/// Whether an unattended run should stop rather than delete.
+///
+/// M1 only ever deleted with somebody watching a preview. A scheduled run
+/// removes that person, and a mirror faithfully reproduces a source that
+/// has gone missing by emptying the backup of it. This is the check that
+/// stands in for the reader who is not there.
+///
+/// `attended` runs — Backup Now — always return `None`: the preview is the
+/// guard there, and someone who has read it and pressed the button has
+/// already made this decision.
+#[must_use]
+pub fn deletion_refusal(plan: &Plan, attended: bool) -> Option<DeletionRefusal> {
+    if attended {
+        return None;
+    }
+
+    let deletions = u64::try_from(plan.deletions.len()).unwrap_or(u64::MAX);
+    if deletions < MIN_UNATTENDED_DELETIONS {
+        return None;
+    }
+
+    // Multiplication rather than a division or a float: an exact comparison,
+    // and no rounding to argue about at the boundary.
+    if deletions * MAX_UNATTENDED_DELETION_SHARE <= plan.destination_files {
+        return None;
+    }
+
+    Some(DeletionRefusal {
+        deletions,
+        destination_files: plan.destination_files,
+    })
+}
+
 #[cfg(test)]
 #[allow(
     clippy::unwrap_used,
@@ -363,7 +446,6 @@ mod tests {
             retention: Retention::Unlimited,
             schedule: Schedule::Manual,
             run_on_connect: true,
-            catch_up: true,
             placeholders: PlaceholderPolicy::Hydrate,
             hydrate_budget_bytes: None,
             follow_symlinks: false,
@@ -544,5 +626,62 @@ mod tests {
             Some(1)
         );
         assert_eq!(RuleProblem::EmptyName.destination_index(), None);
+    }
+
+    fn plan_with(deletions: usize, destination_files: u64) -> Plan {
+        Plan {
+            deletions: (0..deletions)
+                .map(|n| crate::engine::planner::PlannedDeletion {
+                    relative: PathBuf::from(format!("file-{n}.raw")),
+                    bytes: 1,
+                })
+                .collect(),
+            destination_files,
+            ..Plan::default()
+        }
+    }
+
+    #[test]
+    fn an_unattended_run_that_would_empty_the_backup_is_refused() {
+        // The case this exists for: a source that mounted empty, or was
+        // renamed. The mirror is working exactly as configured, and the
+        // result is a backup with nothing in it.
+        let refusal = deletion_refusal(&plan_with(500, 500), false).expect("a refusal");
+        assert_eq!(refusal.deletions, 500);
+        assert_eq!(refusal.destination_files, 500);
+        assert!(format!("{refusal}").contains("Nothing was changed"));
+    }
+
+    #[test]
+    fn an_ordinary_tidy_up_is_not_refused() {
+        // Ten files out of a thousand is a Tuesday.
+        assert_eq!(deletion_refusal(&plan_with(10, 1000), false), None);
+    }
+
+    #[test]
+    fn a_small_folder_losing_most_of_itself_is_not_refused() {
+        // Three files out of four is three quarters, and it is also nothing
+        // — which is why a share alone cannot be the whole rule.
+        assert_eq!(deletion_refusal(&plan_with(3, 4), false), None);
+    }
+
+    #[test]
+    fn the_threshold_is_a_quarter_and_the_boundary_is_not_refused() {
+        // Exactly a quarter passes; one more file does not.
+        assert_eq!(deletion_refusal(&plan_with(25, 100), false), None);
+        assert!(deletion_refusal(&plan_with(26, 100), false).is_some());
+    }
+
+    #[test]
+    fn a_run_somebody_asked_for_is_never_refused() {
+        // Backup Now shows the deletions first and waits. Refusing after
+        // that would be arguing with a decision already made, with the
+        // numbers on screen.
+        assert_eq!(deletion_refusal(&plan_with(500, 500), true), None);
+    }
+
+    #[test]
+    fn a_snapshot_is_unaffected_because_it_never_deletes() {
+        assert_eq!(deletion_refusal(&Plan::default(), false), None);
     }
 }

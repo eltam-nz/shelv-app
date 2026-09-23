@@ -10,6 +10,7 @@
 import type {
   Availability,
   DestinationStatus,
+  Due,
   RuleRow,
   RunResult,
   StoredVolume,
@@ -79,6 +80,7 @@ interface RuleOptions {
   lastResult?: RunResult | null;
   lastRunAt?: number | null;
   enabled?: boolean;
+  due?: Due;
 }
 
 export function makeRule(options: RuleOptions): RuleRow {
@@ -97,7 +99,6 @@ export function makeRule(options: RuleOptions): RuleRow {
         retention: { kind: "keep_last_n", value: 6 },
         schedule: options.schedule,
         run_on_connect: true,
-        catch_up: true,
         placeholders: "hydrate",
         hydrate_budget_bytes: null,
         follow_symlinks: false,
@@ -111,6 +112,7 @@ export function makeRule(options: RuleOptions): RuleRow {
     })),
     destinations: options.destinations,
     source: status("System", options.sourceAvailability ?? "available"),
+    due: options.due ?? { kind: "now" },
     last_run:
       lastRunAt === null
         ? null
@@ -132,6 +134,7 @@ export function makeRule(options: RuleOptions): RuleRow {
               placeholders_skipped: 0,
               bytes_hydrated: 0,
               bytes_released: 0,
+              snapshots_pruned: 0,
             },
             error: null,
             snapshot_path: null,

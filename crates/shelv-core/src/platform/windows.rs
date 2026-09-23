@@ -11,6 +11,7 @@ use std::os::windows::ffi::{OsStrExt, OsStringExt};
 use std::path::{Path, PathBuf};
 
 use windows::core::PCWSTR;
+use windows::Win32::Foundation::{FILETIME, SYSTEMTIME};
 use windows::Win32::Storage::FileSystem::{
     FindFirstVolumeW, FindNextVolumeW, FindVolumeClose, GetDiskFreeSpaceExW, GetDriveTypeW,
     GetFileAttributesW, GetVolumeInformationW, GetVolumeNameForVolumeMountPointW,
@@ -19,14 +20,17 @@ use windows::Win32::Storage::FileSystem::{
     FILE_ATTRIBUTE_RECALL_ON_OPEN, FILE_ATTRIBUTE_UNPINNED, FILE_FLAGS_AND_ATTRIBUTES,
     INVALID_FILE_ATTRIBUTES,
 };
+use windows::Win32::System::Time::{
+    FileTimeToSystemTime, SystemTimeToFileTime, SystemTimeToTzSpecificLocalTime,
+};
 use windows::Win32::System::WindowsProgramming::{
     DRIVE_CDROM, DRIVE_FIXED, DRIVE_RAMDISK, DRIVE_REMOTE, DRIVE_REMOVABLE,
 };
 
 use crate::error::CoreError;
 use crate::platform::{
-    CaseSensitivity, CloudPlaceholders, DriveType, PinState, PlaceholderState, PlatformFs,
-    SpaceInfo, VolumeIdentity, VolumeIdentityKind, VolumeInfo,
+    CaseSensitivity, CloudPlaceholders, DriveType, LocalTime, PinState, PlaceholderState,
+    PlatformFs, SpaceInfo, VolumeIdentity, VolumeIdentityKind, VolumeInfo,
 };
 use crate::Result;
 
@@ -565,4 +569,89 @@ mod tests {
         assert_eq!(cloud.pin_state(&temp).unwrap(), PinState::Unspecified);
         std::fs::remove_file(&temp).ok();
     }
+}
+
+/// 1601-01-01 to 1970-01-01, in the 100-nanosecond units Windows counts in.
+const UNIX_EPOCH_IN_TICKS: i64 = 116_444_736_000_000_000;
+
+/// 100-nanosecond units per second.
+const TICKS_PER_SECOND: i64 = 10_000_000;
+
+/// The local clock, as Windows reports it.
+#[derive(Debug, Clone, Copy)]
+pub struct WindowsLocalTime;
+
+impl LocalTime for WindowsLocalTime {
+    /// Asks Windows what the instant looks like on the local clock, and
+    /// takes the difference.
+    ///
+    /// `SystemTimeToTzSpecificLocalTime` with no zone means the machine's
+    /// current one, and it applies the daylight-saving rule **in force at
+    /// that instant** rather than the one in force today. That is the whole
+    /// reason this takes an instant instead of returning a constant: a run
+    /// in July compared against a run in December must not be a day out
+    /// because the offset changed in between.
+    ///
+    /// Every failure path returns `0` rather than propagating. The caller
+    /// is deciding whether it is a new day yet, and a backup tool that
+    /// refuses to run because a time zone could not be read would be
+    /// choosing the worse of two harms.
+    fn utc_offset_seconds(&self, unix_seconds: i64) -> i32 {
+        let Some(ticks) = unix_seconds
+            .checked_mul(TICKS_PER_SECOND)
+            .and_then(|t| t.checked_add(UNIX_EPOCH_IN_TICKS))
+        else {
+            return 0;
+        };
+        let Some(utc) = to_filetime(ticks) else {
+            return 0;
+        };
+
+        let mut broken_down = SYSTEMTIME::default();
+        let mut local = SYSTEMTIME::default();
+        let mut local_time = FILETIME::default();
+
+        // SAFETY: three Win32 conversions, each writing into a local this
+        // function owns and reading one it has already initialised. None
+        // retains a pointer past the call, and each result is checked
+        // before the next uses its output.
+        unsafe {
+            if FileTimeToSystemTime(&raw const utc, &raw mut broken_down).is_err() {
+                return 0;
+            }
+            if SystemTimeToTzSpecificLocalTime(None, &raw const broken_down, &raw mut local)
+                .is_err()
+            {
+                return 0;
+            }
+            if SystemTimeToFileTime(&raw const local, &raw mut local_time).is_err() {
+                return 0;
+            }
+        }
+
+        // Truncating on purpose: the difference is a whole number of
+        // seconds, because time zone offsets are whole minutes. There is
+        // nothing to round.
+        #[allow(
+            clippy::integer_division,
+            reason = "ticks to seconds, where the remainder is always zero"
+        )]
+        let difference = from_filetime(local_time).saturating_sub(ticks) / TICKS_PER_SECOND;
+        i32::try_from(difference).unwrap_or(0)
+    }
+}
+
+/// Splits a tick count into the two halves `FILETIME` carries.
+fn to_filetime(ticks: i64) -> Option<FILETIME> {
+    let ticks = u64::try_from(ticks).ok()?;
+    Some(FILETIME {
+        dwLowDateTime: u32::try_from(ticks & 0xFFFF_FFFF).ok()?,
+        dwHighDateTime: u32::try_from(ticks >> 32).ok()?,
+    })
+}
+
+/// Rejoins them.
+fn from_filetime(time: FILETIME) -> i64 {
+    let ticks = (u64::from(time.dwHighDateTime) << 32) | u64::from(time.dwLowDateTime);
+    i64::try_from(ticks).unwrap_or(0)
 }

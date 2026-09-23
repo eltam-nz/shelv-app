@@ -27,4 +27,14 @@ skipped: Array<Skipped>,
 /**
  * Total bytes across [`Self::copies`].
  */
-bytes: number, };
+bytes: number, 
+/**
+ * How many files were already at the destination when the plan was
+ * made. Zero for a snapshot, which compares against nothing.
+ *
+ * Carried so that a deletion can be weighed against what is there: ten
+ * files going from a backup of twelve is a different event from ten
+ * going from a backup of ten thousand, and only the first is worth
+ * stopping an unattended run over.
+ */
+destination_files: number, };

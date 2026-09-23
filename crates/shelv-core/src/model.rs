@@ -208,7 +208,10 @@ sql_enum! {
         Manual => "manual",
         /// The rule's schedule came due.
         Schedule => "schedule",
-        /// A scheduled run had been missed and was made up.
+        /// The rule was overdue by more than one period when Shelv noticed
+        /// — the machine was off, or the drive absent, across a boundary.
+        /// The run itself is no different; the distinction is there so the
+        /// history can say why a backup happened on a Tuesday afternoon.
         CatchUp => "catch_up",
         /// A volume the rule depends on was attached.
         OnConnect => "on_connect",
@@ -227,6 +230,11 @@ sql_enum! {
         Failed => "failed",
         /// The user cancelled, or the volume went away.
         Cancelled => "cancelled",
+        /// Stopped before writing anything, because what it was about to do
+        /// did not look like what the rule meant. Distinct from `Failed`:
+        /// nothing is broken, and a refusal in the column someone checks for
+        /// dying drives would be read as one.
+        Refused => "refused",
     }
 }
 
@@ -428,8 +436,6 @@ pub struct RuleSpec {
     pub schedule: Schedule,
     /// Run when a destination volume is attached.
     pub run_on_connect: bool,
-    /// Make up runs missed while the machine was off or the drive absent.
-    pub catch_up: bool,
     /// What to do about cloud placeholders.
     pub placeholders: PlaceholderPolicy,
     /// Cap on bytes hydrated in one run. `None` means no cap.
@@ -486,6 +492,10 @@ pub struct RunStats {
     /// Bytes downloaded from the cloud.
     #[ts(type = "number")]
     pub bytes_hydrated: u64,
+    /// Snapshot folders removed by the rule's retention setting. Recorded
+    /// because this is the one deletion Shelv cannot undo.
+    #[ts(type = "number")]
+    pub snapshots_pruned: u64,
     /// Bytes released back to the cloud after copying.
     #[ts(type = "number")]
     pub bytes_released: u64,

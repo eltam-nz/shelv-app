@@ -37,10 +37,25 @@ const MIGRATIONS: &[Migration] = &[
         name: "volume nickname",
         sql: include_str!("../../migrations/0003_volume_nickname.sql"),
     },
+    Migration {
+        version: 4,
+        name: "period schedules",
+        sql: include_str!("../../migrations/0004_period_schedules.sql"),
+    },
+    Migration {
+        version: 5,
+        name: "refused runs",
+        sql: include_str!("../../migrations/0005_refused_runs.sql"),
+    },
+    Migration {
+        version: 6,
+        name: "snapshots pruned",
+        sql: include_str!("../../migrations/0006_snapshots_pruned.sql"),
+    },
 ];
 
 /// The schema version this build expects.
-pub const LATEST_VERSION: i64 = 3;
+pub const LATEST_VERSION: i64 = 6;
 
 /// Applies any migrations the database has not yet seen.
 ///
@@ -158,6 +173,119 @@ mod tests {
                 .is_err(),
             "the column should be gone"
         );
+    }
+
+    #[test]
+    fn a_v3_database_loses_catch_up_and_keeps_its_rules() {
+        // The column has a DEFAULT, so a build that stopped writing it would
+        // keep inserting rows happily while the column quietly persisted —
+        // which is exactly what happened before this test existed, and why
+        // registering the migration cannot be left to a fresh-install test.
+        let mut conn = Connection::open_in_memory().unwrap();
+        apply_up_to(&mut conn, 3);
+        conn.execute_batch(
+            "INSERT INTO volume (identity_kind, identity, drive_type)
+             VALUES ('linux_fs_uuid', 'uuid-1', 'removable');
+             INSERT INTO rule (name, source_volume, source_rel, layout, packaging,
+                               catch_up, schedule, created_at)
+             VALUES ('Photos', 1, 'Pictures', 'mirror', 'files', 1, 'daily', 1000);",
+        )
+        .unwrap();
+
+        assert_eq!(migrate(&mut conn).unwrap(), LATEST_VERSION);
+
+        let (name, schedule): (String, String) = conn
+            .query_row("SELECT name, schedule FROM rule", [], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })
+            .unwrap();
+        assert_eq!(name, "Photos");
+        assert_eq!(schedule, "daily", "the schedule itself is unchanged");
+        assert!(
+            conn.query_row("SELECT catch_up FROM rule", [], |row| row.get::<_, i64>(0))
+                .is_err(),
+            "the column should be gone"
+        );
+    }
+
+    #[test]
+    fn a_v4_database_keeps_its_run_history_through_the_table_rebuild() {
+        // SQLite cannot alter a CHECK, so 0005 copies the table. That is the
+        // one migration so far that could lose data rather than a column,
+        // and run history is the record someone consults after a drive
+        // fails — so it is checked rather than assumed, indexes included.
+        let mut conn = Connection::open_in_memory().unwrap();
+        apply_up_to(&mut conn, 4);
+        conn.execute_batch(
+            "INSERT INTO volume (identity_kind, identity, drive_type)
+             VALUES ('linux_fs_uuid', 'uuid-1', 'removable');
+             INSERT INTO rule (name, source_volume, source_rel, layout, packaging,
+                               schedule, created_at)
+             VALUES ('Photos', 1, 'Pictures', 'mirror', 'files', 'daily', 1000);
+             INSERT INTO destination (rule_id, volume_id, dest_rel, sort_order)
+             VALUES (1, 1, 'Backups', 0);
+             INSERT INTO run (rule_id, destination_id, \"trigger\", started_at,
+                              finished_at, result, files_copied, bytes_copied)
+             VALUES (1, 1, 'manual', 2000, 2100, 'partial', 7, 4096);",
+        )
+        .unwrap();
+
+        assert_eq!(migrate(&mut conn).unwrap(), LATEST_VERSION);
+
+        let (result, copied, bytes): (String, i64, i64) = conn
+            .query_row(
+                "SELECT result, files_copied, bytes_copied FROM run",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!((result.as_str(), copied, bytes), ("partial", 7, 4096));
+
+        // The new spelling is now accepted, which is the point of the rebuild.
+        conn.execute(
+            "INSERT INTO run (rule_id, destination_id, \"trigger\", started_at, result)
+             VALUES (1, 1, 'schedule', 3000, 'refused')",
+            [],
+        )
+        .unwrap();
+
+        // And the indexes came back with it.
+        let indexes: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM sqlite_master
+                 WHERE type = 'index' AND tbl_name = 'run' AND name LIKE 'idx_run%'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(indexes, 2, "both indexes must survive the rebuild");
+    }
+
+    #[test]
+    fn a_v5_database_gains_the_prune_counter_at_zero() {
+        // Runs that happened before retention existed pruned nothing, and
+        // must not read as though they pruned something unknown.
+        let mut conn = Connection::open_in_memory().unwrap();
+        apply_up_to(&mut conn, 5);
+        conn.execute_batch(
+            "INSERT INTO volume (identity_kind, identity, drive_type)
+             VALUES ('linux_fs_uuid', 'uuid-1', 'removable');
+             INSERT INTO rule (name, source_volume, source_rel, layout, packaging,
+                               schedule, created_at)
+             VALUES ('Photos', 1, 'Pictures', 'snapshot', 'files', 'daily', 1000);
+             INSERT INTO destination (rule_id, volume_id, dest_rel, sort_order)
+             VALUES (1, 1, 'Backups', 0);
+             INSERT INTO run (rule_id, destination_id, \"trigger\", started_at, result)
+             VALUES (1, 1, 'manual', 2000, 'ok');",
+        )
+        .unwrap();
+
+        assert_eq!(migrate(&mut conn).unwrap(), LATEST_VERSION);
+
+        let pruned: i64 = conn
+            .query_row("SELECT snapshots_pruned FROM run", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(pruned, 0);
     }
 
     /// Brings a connection to a given schema version, as a shipped build of

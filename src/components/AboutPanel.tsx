@@ -1,6 +1,13 @@
 import { useEffect, useState } from "react";
 
-import { appVersion, dataLocations, revealDataFolder, ShelvError } from "../lib/ipc";
+import {
+  appVersion,
+  dataLocations,
+  revealDataFolder,
+  runsAtLogin,
+  setRunAtLogin,
+  ShelvError,
+} from "../lib/ipc";
 import type { DataLocations } from "../types";
 
 /**
@@ -14,16 +21,19 @@ export function AboutPanel({ onClose }: { onClose: () => void }) {
   const [version, setVersion] = useState<string | null>(null);
   const [locations, setLocations] = useState<DataLocations | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [atLogin, setAtLogin] = useState(false);
 
   useEffect(() => {
     const load = async () => {
       try {
-        const [nextVersion, nextLocations] = await Promise.all([
+        const [nextVersion, nextLocations, nextAtLogin] = await Promise.all([
           appVersion(),
           dataLocations(),
+          runsAtLogin(),
         ]);
         setVersion(nextVersion);
         setLocations(nextLocations);
+        setAtLogin(nextAtLogin);
       } catch (e: unknown) {
         setError(e instanceof ShelvError ? e.message : String(e));
       }
@@ -86,6 +96,37 @@ export function AboutPanel({ onClose }: { onClose: () => void }) {
               Shelv with a newer build keeps every rule, drive and nickname. Nothing here
               is on your backup drives.
             </p>
+          </section>
+
+          <section className="border-t border-border pt-4">
+            {/* Off unless asked for. A backup tool that adds itself to
+                startup on its own has made a decision that is not its to
+                make — and one that only backs up while somebody remembers
+                to open it is not automated either, so the choice is put
+                where the rest of the machine-wide settings are. */}
+            <label className="flex items-start gap-2">
+              <input
+                type="checkbox"
+                checked={atLogin}
+                onChange={(e) => {
+                  const next = e.target.checked;
+                  setAtLogin(next);
+                  setError(null);
+                  void setRunAtLogin(next).catch((cause: unknown) => {
+                    setAtLogin(!next);
+                    setError(cause instanceof ShelvError ? cause.message : String(cause));
+                  });
+                }}
+                className="mt-0.5"
+              />
+              <span>
+                Start Shelv when I sign in
+                <span className="block text-xs text-fg-muted">
+                  Shelv runs in the notification area and backs up on schedule. Closing
+                  the window hides it rather than quitting.
+                </span>
+              </span>
+            </label>
           </section>
 
           <div className="flex justify-end border-t border-border pt-4">
