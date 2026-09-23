@@ -47,10 +47,15 @@ const MIGRATIONS: &[Migration] = &[
         name: "refused runs",
         sql: include_str!("../../migrations/0005_refused_runs.sql"),
     },
+    Migration {
+        version: 6,
+        name: "snapshots pruned",
+        sql: include_str!("../../migrations/0006_snapshots_pruned.sql"),
+    },
 ];
 
 /// The schema version this build expects.
-pub const LATEST_VERSION: i64 = 5;
+pub const LATEST_VERSION: i64 = 6;
 
 /// Applies any migrations the database has not yet seen.
 ///
@@ -254,6 +259,33 @@ mod tests {
             )
             .unwrap();
         assert_eq!(indexes, 2, "both indexes must survive the rebuild");
+    }
+
+    #[test]
+    fn a_v5_database_gains_the_prune_counter_at_zero() {
+        // Runs that happened before retention existed pruned nothing, and
+        // must not read as though they pruned something unknown.
+        let mut conn = Connection::open_in_memory().unwrap();
+        apply_up_to(&mut conn, 5);
+        conn.execute_batch(
+            "INSERT INTO volume (identity_kind, identity, drive_type)
+             VALUES ('linux_fs_uuid', 'uuid-1', 'removable');
+             INSERT INTO rule (name, source_volume, source_rel, layout, packaging,
+                               schedule, created_at)
+             VALUES ('Photos', 1, 'Pictures', 'snapshot', 'files', 'daily', 1000);
+             INSERT INTO destination (rule_id, volume_id, dest_rel, sort_order)
+             VALUES (1, 1, 'Backups', 0);
+             INSERT INTO run (rule_id, destination_id, \"trigger\", started_at, result)
+             VALUES (1, 1, 'manual', 2000, 'ok');",
+        )
+        .unwrap();
+
+        assert_eq!(migrate(&mut conn).unwrap(), LATEST_VERSION);
+
+        let pruned: i64 = conn
+            .query_row("SELECT snapshots_pruned FROM run", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(pruned, 0);
     }
 
     /// Brings a connection to a given schema version, as a shipped build of

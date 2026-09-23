@@ -131,6 +131,7 @@ export function makeRule(options: RuleOptions): RuleRow {
               placeholders_skipped: 0,
               bytes_hydrated: 0,
               bytes_released: 0,
+              snapshots_pruned: 0,
             },
             error: null,
             snapshot_path: null,

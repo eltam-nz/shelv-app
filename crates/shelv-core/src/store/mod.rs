@@ -583,7 +583,8 @@ impl Store {
                                 files_copied = ?6, files_skipped = ?7, files_deleted = ?8,
                                 bytes_copied = ?9, compressed_bytes = ?10,
                                 placeholders_hydrated = ?11, placeholders_skipped = ?12,
-                                bytes_hydrated = ?13, bytes_released = ?14
+                                bytes_hydrated = ?13, bytes_released = ?14,
+                                snapshots_pruned = ?15
                  WHERE id = ?1",
                 rusqlite::params![
                     id,
@@ -600,6 +601,7 @@ impl Store {
                     as_i64(stats.placeholders_skipped),
                     as_i64(stats.bytes_hydrated),
                     as_i64(stats.bytes_released),
+                    as_i64(stats.snapshots_pruned),
                 ],
             )
             .map_err(store_err("could not record the outcome of the run"))?;
@@ -706,7 +708,7 @@ const RULE_SELECT: &str = "SELECT id, name, enabled, source_volume, source_rel, 
 const RUN_SELECT: &str = "SELECT id, rule_id, destination_id, \"trigger\", started_at, finished_at,
             result, files_copied, files_skipped, files_deleted, bytes_copied, compressed_bytes,
             placeholders_hydrated, placeholders_skipped, bytes_hydrated, bytes_released,
-            error, snapshot_path
+            snapshots_pruned, error, snapshot_path
      FROM run";
 
 /// Encodes a path for storage.
@@ -858,9 +860,10 @@ fn read_run(row: &Row<'_>) -> rusqlite::Result<Run> {
             placeholders_skipped: as_u64(row.get(13)?),
             bytes_hydrated: as_u64(row.get(14)?),
             bytes_released: as_u64(row.get(15)?),
+            snapshots_pruned: as_u64(row.get(16)?),
         },
-        error: row.get(16)?,
-        snapshot_path: row.get::<_, Option<String>>(17)?.map(|s| path_from_db(&s)),
+        error: row.get(17)?,
+        snapshot_path: row.get::<_, Option<String>>(18)?.map(|s| path_from_db(&s)),
     })
 }
 

@@ -137,6 +137,16 @@ pub fn execute(
         options,
     )?;
 
+    // The totals a progress bar counts towards are only knowable now, and
+    // only per destination: a rule with two drives plans each as it reaches
+    // it. The trait's method has a default, so a missing call here compiles
+    // and shows "0 of 0 files" instead — which is why there is a test for
+    // it rather than only for the copying.
+    observer.planned(
+        u64::try_from(plan.copies.len()).unwrap_or(u64::MAX),
+        plan.bytes,
+    );
+
     // Before anything is written, and before anything is moved. A run that
     // has decided the source looks wrong must not half-apply itself: the
     // copies are as suspect as the deletions, since both come from the same
@@ -229,6 +239,7 @@ mod tests {
     use crate::engine::trash::{TrashFailure, TRASH_DIR};
     use crate::platform::{CaseSensitivity, SpaceInfo, VolumeInfo};
     use crate::CoreError;
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
     struct FakeFs;
 
@@ -603,5 +614,57 @@ mod tests {
 
         assert_eq!(outcome.result, RunResult::Ok);
         assert_eq!(outcome.trashed.files_trashed, 20);
+    }
+
+    /// Records what a run tells a progress bar, and when.
+    #[derive(Default)]
+    struct Totals {
+        files: AtomicU64,
+        bytes: AtomicU64,
+        before_any_copy: AtomicBool,
+        copied: AtomicU64,
+    }
+
+    impl CopyObserver for Totals {
+        fn planned(&self, files: u64, bytes: u64) {
+            self.files.store(files, Ordering::Relaxed);
+            self.bytes.store(bytes, Ordering::Relaxed);
+            self.before_any_copy
+                .store(self.copied.load(Ordering::Relaxed) == 0, Ordering::Relaxed);
+        }
+
+        fn file_finished(&self, _relative: &Path) {
+            self.copied.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    #[test]
+    fn the_totals_a_progress_bar_needs_are_reported_before_the_copying() {
+        // These were silently absent from M1.5 until M3.4: `planned` has a
+        // default implementation, so nothing failed to compile and nothing
+        // failed a test — the status bar simply read "0 of 0 files".
+        let src = tempfile::tempdir().unwrap();
+        let dst = tempfile::tempdir().unwrap();
+        std::fs::write(src.path().join("one.raw"), b"12345").unwrap();
+        std::fs::write(src.path().join("two.raw"), b"678").unwrap();
+
+        let totals = Totals::default();
+        execute(
+            &FakeFs,
+            src.path(),
+            dst.path(),
+            &options(Layout::Mirror),
+            NOW,
+            Watched::ByHand,
+            &totals,
+        )
+        .unwrap();
+
+        assert_eq!(totals.files.load(Ordering::Relaxed), 2);
+        assert_eq!(totals.bytes.load(Ordering::Relaxed), 8);
+        assert!(
+            totals.before_any_copy.load(Ordering::Relaxed),
+            "a bar that learns its total half way through has already lied"
+        );
     }
 }

@@ -31,6 +31,7 @@ export type { Plan } from "./Plan";
 export type { PlanOutcome } from "./PlanOutcome";
 export type { PlannedCopy } from "./PlannedCopy";
 export type { PlannedDeletion } from "./PlannedDeletion";
+export type { PruneReport } from "./PruneReport";
 export type { Retention } from "./Retention";
 export type { Rule } from "./Rule";
 export type { RuleId } from "./RuleId";

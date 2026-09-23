@@ -14,6 +14,7 @@
 
 pub mod copier;
 pub mod planner;
+pub mod retention;
 pub mod run;
 pub mod stamp;
 pub mod trash;
@@ -287,7 +288,21 @@ fn run_destination(
 
     match run::execute(fs, source, &root, &options, started_at, watched, observer) {
         Ok(outcome) => {
-            let stats = stats_of(&outcome);
+            // Only after a run that did everything it planned. A partial
+            // run may have failed to copy the very file an old snapshot is
+            // the last copy of (`docs/PLAN.md` §1.1c).
+            let pruned = if spec.layout == Layout::Snapshot && outcome.result == RunResult::Ok {
+                let report = retention::prune(fs, &root, spec.retention, &outcome.target, clock());
+                for failure in &report.failures {
+                    tracing::warn!(failure, "an old snapshot could not be removed");
+                }
+                report.pruned
+            } else {
+                0
+            };
+
+            let mut stats = stats_of(&outcome);
+            stats.snapshots_pruned = pruned;
             let snapshot = (spec.layout == Layout::Snapshot).then(|| outcome.target.clone());
             // A refusal carries its reason into the history, where the point
             // of it is: somebody reading the run list later has to be able
@@ -780,5 +795,98 @@ mod tests {
             "the history has to say what it saw"
         );
         assert_eq!(fs::read_dir(dst.path()).unwrap().count(), 20);
+    }
+
+    #[test]
+    fn retention_prunes_old_snapshots_after_a_successful_run() {
+        let src = tempfile::tempdir().unwrap();
+        let dst = tempfile::tempdir().unwrap();
+        fs::write(src.path().join("one.raw"), b"hello").unwrap();
+
+        let (store, platform, rule) = fixture(src.path(), dst.path(), Layout::Snapshot);
+        let mut spec = store.rule(rule).unwrap().spec;
+        spec.retention = Retention::KeepLastN(2);
+        store.update_rule(rule, &spec).unwrap();
+
+        // Three runs a day apart, so each writes its own folder.
+        for day in 0..3 {
+            let at = NOW + day * 86_400;
+            run_rule(&store, &platform, rule, RunTrigger::Manual, &|| at, &Silent).unwrap();
+        }
+
+        let folders = fs::read_dir(dst.path()).unwrap().count();
+        assert_eq!(folders, 2, "keep the last two");
+
+        let last = store.last_run(rule).unwrap().unwrap();
+        assert_eq!(
+            last.stats.snapshots_pruned, 1,
+            "the history has to record what was deleted outright"
+        );
+    }
+
+    #[test]
+    fn a_partial_run_prunes_nothing() {
+        // The run copied what it could. Pruning now could remove the last
+        // copy of the very file it failed to read.
+        let src = tempfile::tempdir().unwrap();
+        let dst = tempfile::tempdir().unwrap();
+        fs::write(src.path().join("one.raw"), b"hello").unwrap();
+
+        let (store, platform, rule) = fixture(src.path(), dst.path(), Layout::Snapshot);
+        let mut spec = store.rule(rule).unwrap().spec;
+        spec.retention = Retention::KeepLastN(1);
+        store.update_rule(rule, &spec).unwrap();
+
+        run_rule(
+            &store,
+            &platform,
+            rule,
+            RunTrigger::Manual,
+            &|| NOW,
+            &Silent,
+        )
+        .unwrap();
+
+        // A file that is planned and then gone, which is what makes a run
+        // partial.
+        fs::write(src.path().join("vanishes.raw"), b"x").unwrap();
+        let planned = std::sync::atomic::AtomicBool::new(false);
+        let observer = Vanishing {
+            path: src.path().join("vanishes.raw"),
+            done: &planned,
+        };
+        run_rule(
+            &store,
+            &platform,
+            rule,
+            RunTrigger::Manual,
+            &|| NOW + 86_400,
+            &observer,
+        )
+        .unwrap();
+
+        let last = store.last_run(rule).unwrap().unwrap();
+        assert_eq!(last.result, Some(RunResult::Partial));
+        assert_eq!(last.stats.snapshots_pruned, 0);
+        assert_eq!(
+            fs::read_dir(dst.path()).unwrap().count(),
+            2,
+            "both snapshots are still there"
+        );
+    }
+
+    /// Removes a file once the copy has started, so the run comes out
+    /// `Partial` the way a locked or deleted file makes it.
+    struct Vanishing<'a> {
+        path: PathBuf,
+        done: &'a std::sync::atomic::AtomicBool,
+    }
+
+    impl CopyObserver for Vanishing<'_> {
+        fn planned(&self, _files: u64, _bytes: u64) {
+            if !self.done.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                let _ = fs::remove_file(&self.path);
+            }
+        }
     }
 }

@@ -393,6 +393,35 @@ or `catch_up` when the rule had been due for more than one period. The run is
 no different — the word is there so someone can tell why a backup happened on
 a Tuesday afternoon.
 
+### Pruning old snapshots
+
+`engine::retention` is the only code in Shelv that deletes without a way
+back. Mirror deletions move to a trash folder on the same volume, which
+costs nothing and can be undone; pruning exists precisely to reclaim that
+space, so a trash folder here would defeat the point. What guards it is that
+every condition has to hold before a single folder goes:
+
+- the run that just finished did **everything** it planned — not `Partial`,
+  which may have failed to copy the very file an old snapshot is the last
+  copy of (`docs/PLAN.md` §1.1c);
+- the folder's name parses as one Shelv wrote, through
+  `stamp::parse`, which refuses anything that is not exactly the shape
+  `folder_name` produces — a destination may hold anything, and a directory
+  that merely shares it is never touched;
+- it is not the snapshot this run just made;
+- and the rule asked for a limit at all.
+
+`KeepLastN` counts the snapshot just written, so "keep the last 3" leaves
+three. `KeepDays` measures from the folder's **name**, not its mtime, which
+a copy tool has already touched. What was pruned is recorded in the run
+history, because something that deletes and leaves no record is exactly what
+the history is for.
+
+The trash folders a mirror leaves are **not** pruned, by decision: they are
+the recovery path for the mistake automation makes more likely, and an
+automatic sweep of them would be the same mistake a month later. Clearing
+them is manual.
+
 ## Volume identity
 
 The single most important decision in the data model, because getting it wrong

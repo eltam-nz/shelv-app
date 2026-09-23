@@ -41,6 +41,64 @@ pub fn folder_name(unix_seconds: i64) -> String {
     format!("{year:04}-{month:02}-{day:02}T{hour:02}{minute:02}{second:02}Z")
 }
 
+/// Reads a folder name back, if Shelv wrote it.
+///
+/// Retention deletes folders outright, so the question "did we write this?"
+/// is the only thing standing between a pruning pass and somebody's
+/// unrelated directory that happens to live in the same place. Anything
+/// that is not exactly the shape [`folder_name`] produces is refused.
+///
+/// The `-2`, `-3` suffix a run takes when a folder of that second already
+/// exists parses too, since those are ours as well.
+#[must_use]
+pub fn parse(name: &str) -> Option<i64> {
+    // YYYY-MM-DDTHHMMSSZ, with an optional -N after it.
+    let (stamp, suffix) = match name.split_once("Z-") {
+        Some((stamp, suffix)) => (stamp, Some(suffix)),
+        None => (name.strip_suffix('Z')?, None),
+    };
+    if let Some(suffix) = suffix {
+        if suffix.is_empty() || !suffix.bytes().all(|b| b.is_ascii_digit()) {
+            return None;
+        }
+    }
+
+    let (date, time) = stamp.split_once('T')?;
+    let mut parts = date.split('-');
+    let year: i64 = parts.next()?.parse().ok()?;
+    let month: i64 = two_digits(parts.next()?)?;
+    let day: i64 = two_digits(parts.next()?)?;
+    if parts.next().is_some() || !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+        return None;
+    }
+
+    if time.len() != 6 {
+        return None;
+    }
+    let hour = two_digits(time.get(0..2)?)?;
+    let minute = two_digits(time.get(2..4)?)?;
+    let second = two_digits(time.get(4..6)?)?;
+    if hour > 23 || minute > 59 || second > 59 {
+        return None;
+    }
+
+    Some(
+        crate::civil::days_from_civil(year, month, day) * 86_400
+            + hour * 3600
+            + minute * 60
+            + second,
+    )
+}
+
+/// Parses exactly two digits, so `2025-9-1` is refused rather than read as
+/// September. A name Shelv did not write is not one to delete.
+fn two_digits(text: &str) -> Option<i64> {
+    if text.len() != 2 || !text.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    text.parse().ok()
+}
+
 #[cfg(test)]
 #[allow(
     clippy::unwrap_used,
@@ -103,5 +161,41 @@ mod tests {
             !name.contains([':', '/', '\\', '*', '?', '"', '<', '>', '|']),
             "{name}"
         );
+    }
+
+    #[test]
+    fn a_name_shelv_wrote_reads_back_as_the_moment_it_was_written() {
+        for instant in [0, 1_758_526_452, 1_709_164_800] {
+            assert_eq!(parse(&folder_name(instant)), Some(instant), "{instant}");
+        }
+    }
+
+    #[test]
+    fn the_collision_suffix_is_still_ours() {
+        let name = format!("{}-2", folder_name(1_758_526_452));
+        assert_eq!(parse(&name), Some(1_758_526_452));
+    }
+
+    #[test]
+    fn anything_else_is_refused() {
+        // Retention deletes what this accepts, so the answer to "did we
+        // write this?" has to be no whenever there is any doubt.
+        for name in [
+            "",
+            "Photos",
+            "2025-09-22",
+            "2025-09-22T073412",
+            "2025-9-22T073412Z",
+            "2025-09-22T0734Z",
+            "2025-09-22T253412Z",
+            "2025-09-22T076012Z",
+            "2025-13-22T073412Z",
+            "2025-09-32T073412Z",
+            "2025-09-22T073412Z-",
+            "2025-09-22T073412Z-x",
+            "backup-2025-09-22T073412Z",
+        ] {
+            assert_eq!(parse(name), None, "{name} should not be ours");
+        }
     }
 }

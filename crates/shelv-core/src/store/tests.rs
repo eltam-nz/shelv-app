@@ -242,6 +242,7 @@ fn a_run_records_its_outcome_and_counters() {
         placeholders_skipped: 1,
         bytes_hydrated: 2_000_000_000,
         bytes_released: 2_000_000_000,
+        snapshots_pruned: 2,
     };
     store
         .finish_run(

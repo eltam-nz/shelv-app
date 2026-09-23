@@ -492,6 +492,10 @@ pub struct RunStats {
     /// Bytes downloaded from the cloud.
     #[ts(type = "number")]
     pub bytes_hydrated: u64,
+    /// Snapshot folders removed by the rule's retention setting. Recorded
+    /// because this is the one deletion Shelv cannot undo.
+    #[ts(type = "number")]
+    pub snapshots_pruned: u64,
     /// Bytes released back to the cloud after copying.
     #[ts(type = "number")]
     pub bytes_released: u64,

@@ -38,6 +38,11 @@ placeholders_skipped: number,
  */
 bytes_hydrated: number, 
 /**
+ * Snapshot folders removed by the rule's retention setting. Recorded
+ * because this is the one deletion Shelv cannot undo.
+ */
+snapshots_pruned: number, 
+/**
  * Bytes released back to the cloud after copying.
  */
 bytes_released: number, };
