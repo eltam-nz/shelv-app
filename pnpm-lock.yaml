@@ -13,13 +13,13 @@ importers:
         version: 8.21.3(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       '@tauri-apps/api':
         specifier: ^2
-        version: 2.11.1
+        version: 2.12.1
       '@tauri-apps/plugin-dialog':
         specifier: ^2
-        version: 2.7.3
+        version: 2.8.1
       '@tauri-apps/plugin-notification':
         specifier: ^2
-        version: 2.4.0
+        version: 2.5.1
       react:
         specifier: ^19
         version: 19.3.0
@@ -746,8 +746,8 @@ packages:
     resolution: {integrity: sha512-ldZXEhOBb8Is7xLs01fR3YEc3DERiz5silj8tnGkFZytt1abEvl/GhUmCE0PMLaMPTa3Jk4HbKmRlHmu+gCftg==}
     engines: {node: '>=12'}
 
-  '@tauri-apps/api@2.11.1':
-    resolution: {integrity: sha512-M2FPuYND2m+wh5hfW9ZpSdxMPdEJovPBWwoHJmwUpysTYNHaOkVFN419m/K0LIgjb/7KU2vBgsUepJWugQCvAA==}
+  '@tauri-apps/api@2.12.1':
+    resolution: {integrity: sha512-DeyFHa3wynpyoqTDikDEDGTJIq4LQ5USfolQGRmGIWT6JMADyxZBTDa5cAdT3tDg73rUXufPaCwN7aXBos4OnQ==}
 
   '@tauri-apps/cli-darwin-arm64@2.11.5':
     resolution: {integrity: sha512-tggOiVOohjIHdiElbjeBfB41s6cmfsq+ZQ0PX0fEtCdsDdZ9cCi54e5gNK7tdPbR6JbdDe7RA4kbQdyyBUUk/Q==}
@@ -825,11 +825,11 @@ packages:
     engines: {node: '>= 10'}
     hasBin: true
 
-  '@tauri-apps/plugin-dialog@2.7.3':
-    resolution: {integrity: sha512-CRgE+7TP4tvq9MjBU6f04NLTFIqVMLKHk3hAqlhil00ngK9ACTrXPH3oHpKMProxILodd3YjBoKbMwSI4IEcfA==}
+  '@tauri-apps/plugin-dialog@2.8.1':
+    resolution: {integrity: sha512-/DtE3B62JgpYuWFL5ATXM6KOXUq7pca7cJWOgSqULhZsgyjLk0PWKek1dbRDvhNBW6flNsOfWphsKnb+738Dmw==}
 
-  '@tauri-apps/plugin-notification@2.4.0':
-    resolution: {integrity: sha512-xlJXMcUoKOjNupzDue5wrEsa1wytf+l/2gCAPhafHyP683Y3N7J/8clUWLZ3vpnwkpT2C1zcLMMQFjjecIG2xg==}
+  '@tauri-apps/plugin-notification@2.5.1':
+    resolution: {integrity: sha512-i0nD48YsLov18siENevC3X7SmJpQE1cImq+JUsjrUPdu73J8cTIOyNIS8H0qxftFAc1k2w6s1E74DoFE02Jirw==}
 
   '@testing-library/dom@10.4.2':
     resolution: {integrity: sha512-yzr2S9HyAIdhz2/6qHgbs665Q7PKVcDF05vsOlHPxG1mo36gKVesdYVeDLnXgfjJ03CrKRk08knc6+E/9m8v2Q==}
@@ -2304,7 +2304,7 @@ snapshots:
 
   '@tanstack/table-core@8.21.3': {}
 
-  '@tauri-apps/api@2.11.1': {}
+  '@tauri-apps/api@2.12.1': {}
 
   '@tauri-apps/cli-darwin-arm64@2.11.5':
     optional: true
@@ -2353,13 +2353,13 @@ snapshots:
       '@tauri-apps/cli-win32-ia32-msvc': 2.11.5
       '@tauri-apps/cli-win32-x64-msvc': 2.11.5
 
-  '@tauri-apps/plugin-dialog@2.7.3':
+  '@tauri-apps/plugin-dialog@2.8.1':
     dependencies:
-      '@tauri-apps/api': 2.11.1
+      '@tauri-apps/api': 2.12.1
 
-  '@tauri-apps/plugin-notification@2.4.0':
+  '@tauri-apps/plugin-notification@2.5.1':
     dependencies:
-      '@tauri-apps/api': 2.11.1
+      '@tauri-apps/api': 2.12.1
 
   '@testing-library/dom@10.4.2':
     dependencies:
